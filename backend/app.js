@@ -21,6 +21,8 @@ import customerRoutes from "./routes/customer.routes.js";
 import tierRoutes from "./routes/tier.routes.js";
 import catalogRoutes from "./routes/catalog.routes.js";
 import quotationRoutes from "./routes/quotation.routes.js";
+import warehouseRoutes from "./routes/warehouse.routes.js";
+import subscriptionPlanRoutes from "./routes/subscriptionPlan.routes.js";
 
 // ── Track 2 · governance, approvals, audit ──────────────────────────────────
 import governanceRoutes from "./routes/governance.routes.js";
@@ -80,14 +82,14 @@ app.use("/api", catalogRoutes);
 // quotationRoutes, which applies a blanket `authenticate` to everything under
 // /api/quotations and would otherwise 401 this path.
 //
-// SECURITY TODO (Phase 3): this endpoint is unauthenticated, carried over
-// as-is from the pre-merge code so T4's portal suite keeps passing. Minting a
-// customer portal link is an internal rep action and must be wrapped in
-// `requireInternal` — currently anyone can mint a link for any quotation id.
-// The same hole exists on POST /api/portal/links/:id in portal.routes.js.
-app.post("/api/quotations/:id/portal-link", generatePortalLink);
+// Minting a customer portal link is an internal rep action, so it requires an
+// internal token. It was unauthenticated before Phase 3 — anyone who could
+// guess a quotation id could mint a working customer link for it.
+app.post("/api/quotations/:id/portal-link", requireInternal, generatePortalLink);
 
 app.use("/api/quotations", quotationRoutes);
+app.use("/api/warehouses", warehouseRoutes);
+app.use("/api/subscription-plans", subscriptionPlanRoutes);
 app.use("/api/governance", governanceRoutes);
 app.use("/api/approvals", approvalRoutes);
 app.use("/api/audit-logs", auditRoutes);

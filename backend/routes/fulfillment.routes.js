@@ -7,7 +7,13 @@ import {
     allocateOrder
 } from "../controllers/fulfillment.controller.js";
 
+import { authenticate } from "../middleware/auth.middleware.js";
+
 const router = express.Router();
+
+// This router owns its mount path, so a blanket guard is safe.
+// These endpoints were previously reachable with no authentication at all.
+router.use(authenticate);
 
 
 // Get the recommended fulfillment plan.

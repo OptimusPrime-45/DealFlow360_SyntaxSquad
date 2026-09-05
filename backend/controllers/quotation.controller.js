@@ -11,6 +11,7 @@ import { calculateLineMath, round2, add, toNum } from "../lib/money.js";
 // decision could disagree. Both now call this one.
 import { resolveCeiling } from "../rules/resolveCeiling.js";
 import { scoreQuotation } from "../rules/scoreQuotation.js";
+import { routeQuotationForApproval } from "../services/approvalRouting.service.js";
 
 // Input validation schema
 const lineInputSchema = z.object({
@@ -360,3 +361,60 @@ export default {
   deleteQuotation,
 };
 
+
+/**
+ * Submit a quotation — §9 step 3.
+ * POST /api/quotations/:id/submit
+ *
+ * The rep presses "Confirm". They do NOT press "request approval": the system
+ * scores the quotation against current configuration and decides for itself
+ * whether a human is needed, and which ones. A compliant quote goes straight
+ * to APPROVED; anything over a ceiling opens the approval ladder.
+ */
+export const submitQuotation = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const quotation = await prisma.quotation.findUnique({
+    where: { id },
+    select: { id: true, status: true, quotationNumber: true },
+  });
+
+  if (!quotation) {
+    throw new ApiError(404, "Quotation not found");
+  }
+
+  // Only a draft (or a quote sent back for revision) can be submitted.
+  const SUBMITTABLE = ["DRAFT", "REJECTED"];
+  if (!SUBMITTABLE.includes(quotation.status)) {
+    throw new ApiError(
+      400,
+      `Quotation ${quotation.quotationNumber} cannot be submitted from status ${quotation.status}`
+    );
+  }
+
+  const result = await routeQuotationForApproval({
+    quotationId: id,
+    actorUserId: req.user?.id || null,
+    triggerSource: "REP_SUBMIT",
+  });
+
+  const message = result.autoApproved
+    ? "Quotation is within every configured ceiling and was approved automatically"
+    : `Quotation exceeds policy limits and was routed automatically to: ${result.evaluation.requiredApprovalSteps
+        .map((s) => s.roleName || s.roleCode)
+        .join(" then ")}`;
+
+  return res.status(result.autoApproved ? 200 : 201).json(
+    new ApiResponse(
+      result.autoApproved ? 200 : 201,
+      {
+        autoApproved: result.autoApproved,
+        status: result.status,
+        routedTo: (result.evaluation.requiredApprovalSteps || []).map((s) => s.roleCode),
+        approval: result.approval,
+        evaluation: result.evaluation,
+      },
+      message
+    )
+  );
+});

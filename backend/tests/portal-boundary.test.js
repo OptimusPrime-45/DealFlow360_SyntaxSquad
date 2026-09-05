@@ -161,8 +161,25 @@ async function runTests() {
     // TEST 1: Portal Token Generation
     // ========================================================================
     console.log('▶ Test 1: Link Generation (POST /api/quotations/:id/portal-link)');
+    // Minting a portal link is an INTERNAL action and now requires an internal
+    // token — an unauthenticated caller must not be able to mint a customer
+    // link for an arbitrary quotation id.
+    const internalToken = jwt.sign(
+      { typ: 'internal', userId: user.id, role: 'SALES_REP' },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    const unauthGenRes = await apiRequest(`/api/quotations/${quotation.id}/portal-link`, {
+      method: 'POST',
+      body: JSON.stringify({ expiresInDays: 7 })
+    });
+    assert(unauthGenRes.status === 401,
+      `Unauthenticated link minting is rejected with 401 (got ${unauthGenRes.status})`);
+
     const genRes = await apiRequest(`/api/quotations/${quotation.id}/portal-link`, {
       method: 'POST',
+      headers: { 'Authorization': `Bearer ${internalToken}` },
       body: JSON.stringify({ expiresInDays: 7 })
     });
 
@@ -231,13 +248,7 @@ async function runTests() {
     // TEST 5: Metric M6 Adversarial Test 2 (Internal token on portal route)
     // ========================================================================
     console.log('▶ Test 5: Metric M6 Security — Internal token on portal route MUST FAIL');
-    // Forge an internal JWT signed with JWT_SECRET
-    const internalToken = jwt.sign(
-      { typ: 'internal', userId: user.id, role: 'SALES_REP' },
-      process.env.JWT_SECRET,
-      { expiresIn: '1h' }
-    );
-
+    // Reuses the internal token forged for Test 1.
     const portalWithInternalRes = await apiRequest('/api/portal/quote', {
       method: 'GET',
       headers: {

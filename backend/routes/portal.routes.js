@@ -21,7 +21,7 @@ router.get('/quote', requirePortal, portalController.getPortalQuote);
 // Staff / Sales Rep Endpoints (Protected by internal auth or direct link generation)
 // ============================================================================
 // Rep generates a magic link for a quote
-router.post('/links/:id', portalController.generatePortalLink);
+router.post('/links/:id', requireInternal, portalController.generatePortalLink);
 
 // Staff revokes a portal token
 router.post('/revoke/:tokenId', requireInternal, portalController.revokeToken);

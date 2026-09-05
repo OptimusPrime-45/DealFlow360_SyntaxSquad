@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import * as invoicingController from '../controllers/invoicing.controller.js';
+import { authenticate } from '../middleware/auth.middleware.js';
 
 const router = Router();
+
+// This router owns /api/invoices entirely, so a blanket guard is safe.
+// These endpoints previously answered 200 with no authentication at all.
+router.use(authenticate);
 
 // ============================================================================
 // Invoicing & Revenue Routes

@@ -11,6 +11,7 @@ import { ApiError } from '../utils/api-error.js';
 import { ApiResponse } from '../utils/api-response.js';
 import { asyncHandler } from '../utils/async-handler.js';
 import { runQuotationEvaluation } from './governance.controller.js';
+import { routeQuotationForApproval } from '../services/approvalRouting.service.js';
 
 // ============================================================================
 // Input Validation Schemas
@@ -267,114 +268,28 @@ export const requestApproval = asyncHandler(async (req, res) => {
   const { quotationId } = req.params;
   const triggerSource = req.body.triggerSource || 'REP_SUBMIT';
 
-  // 1. Run live quotation evaluation
-  const evalResult = await runQuotationEvaluation(quotationId);
+  // Delegates to the shared routing service so this endpoint and the automatic
+  // submit path (POST /api/quotations/:id/submit) can never diverge.
+  const result = await routeQuotationForApproval({
+    quotationId,
+    actorUserId: req.user?.id || null,
+    triggerSource,
+  });
 
-  // 2. Branch A: Auto-Approve if compliant
-  if (!evalResult.requiresApproval || evalResult.requiredApprovalSteps.length === 0) {
-    const updatedQuotation = await prisma.quotation.update({
-      where: { id: quotationId },
-      data: {
-        status: 'APPROVED',
-        lastActivityAt: new Date(),
-      },
-    });
-
-    await recordAuditLog({
-      userId: req.user?.id || null,
-      quotationId,
-      actorType: req.user ? 'USER' : 'SYSTEM',
-      entityType: 'Quotation',
-      entityId: quotationId,
-      action: 'APPROVAL_AUTO_GRANTED',
-      newValue: { status: 'APPROVED', blendedScore: evalResult.blendedScore },
-      reason: 'Quotation complies with all discount ceilings and margins (Auto-approved)',
-    });
-
+  if (result.autoApproved) {
     return res.status(200).json(
       new ApiResponse(
         200,
         {
           autoApproved: true,
           status: 'APPROVED',
-          quotation: updatedQuotation,
-          evaluation: evalResult,
+          quotation: result.quotation,
+          evaluation: result.evaluation,
         },
         'Quotation within policy limits: auto-approved successfully'
       )
     );
   }
-
-  // 3. Branch B: Requires Human Approval Ladder
-  const activePolicy = await prisma.approvalPolicy.findFirst({
-    where: { isActive: true },
-  });
-
-  if (!activePolicy) {
-    throw new ApiError(500, 'No active approval policy configured in the system');
-  }
-
-  // Get next approval cycle counter
-  const lastApproval = await prisma.quotationApproval.findFirst({
-    where: { quotationId },
-    orderBy: { approvalCycle: 'desc' },
-  });
-  const nextCycle = (lastApproval?.approvalCycle || 0) + 1;
-
-  // Create approval cycle record and step rows in a single transaction
-  const approval = await prisma.$transaction(async (tx) => {
-    const newApproval = await tx.quotationApproval.create({
-      data: {
-        quotationId,
-        approvalPolicyId: activePolicy.id,
-        approvalCycle: nextCycle,
-        status: 'PENDING',
-        blendedScore: evalResult.blendedScore,
-        worstLineOverage: evalResult.worstLineOverage,
-        findings: evalResult.findings,
-        triggeredBy: triggerSource,
-        steps: {
-          create: evalResult.requiredApprovalSteps.map((step) => ({
-            roleId: step.roleId,
-            stepOrder: step.stepOrder,
-            status: 'PENDING',
-          })),
-        },
-      },
-      include: {
-        steps: {
-          include: { role: true },
-          orderBy: { stepOrder: 'asc' },
-        },
-      },
-    });
-
-    await tx.quotation.update({
-      where: { id: quotationId },
-      data: {
-        status: 'PENDING_APPROVAL',
-        lastActivityAt: new Date(),
-      },
-    });
-
-    return newApproval;
-  });
-
-  await recordAuditLog({
-    userId: req.user?.id || null,
-    quotationId,
-    actorType: req.user ? 'USER' : 'SYSTEM',
-    entityType: 'QuotationApproval',
-    entityId: approval.id,
-    action: 'APPROVAL_REQUESTED',
-    newValue: {
-      approvalCycle: nextCycle,
-      triggeredSteps: evalResult.requiredApprovalSteps.map((s) => s.roleCode),
-      blendedScore: evalResult.blendedScore,
-      worstLineOverage: evalResult.worstLineOverage,
-    },
-    reason: `Approval requested via ${triggerSource}`,
-  });
 
   return res.status(201).json(
     new ApiResponse(
@@ -382,8 +297,8 @@ export const requestApproval = asyncHandler(async (req, res) => {
       {
         autoApproved: false,
         status: 'PENDING_APPROVAL',
-        approval,
-        evaluation: evalResult,
+        approval: result.approval,
+        evaluation: result.evaluation,
       },
       'Quotation requires authorization: approval cycle created'
     )

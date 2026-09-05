@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import http from 'http';
+import jwt from 'jsonwebtoken';
 import app from '../app.js';
 import prisma from '../lib/prisma.js';
 import { generateInvoicesForOrder } from '../controllers/invoicing.controller.js';
@@ -23,12 +24,17 @@ const PORT = 4097; // Isolated test port
 let server;
 let baseUrl;
 
+// /api/invoices requires an internal token (it was unauthenticated before
+// Phase 3). Set once the finance user fixture exists.
+let authToken = null;
+
 async function apiRequest(endpoint, options = {}) {
   const url = `${baseUrl}${endpoint}`;
   const res = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       ...(options.headers || {})
     }
   });
@@ -78,6 +84,13 @@ async function runTests() {
         roleId: role.id
       }
     });
+
+    // Internal token for this finance user — /api/invoices is guarded now.
+    authToken = jwt.sign(
+      { typ: 'internal', userId: financeUser.id, role: 'FINANCE' },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
 
     const tier = await prisma.customerTier.upsert({
       where: { code: 'SILVER' },

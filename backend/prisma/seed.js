@@ -301,31 +301,212 @@ async function main() {
     },
   });
 
-  const existingSteps = await prisma.approvalPolicyStep.count({
-    where: { approvalPolicyId: defaultPolicy.id },
-  });
+  // A rung fires when EITHER trigger is crossed:
+  //     blendedScore >= minBlendedScore  OR  worstLineOverage >= minWorstLineOverage
+  //
+  // The two thresholds MUST differ. They were previously seeded equal
+  // (5/5 and 15/15), which made the blended dimension inert: any quote
+  // reaching blended >= 5 had almost certainly already tripped worst-line >= 5,
+  // so worst-line alone made every identical decision. That switches off the
+  // exact property PDF §10 exists to describe — many small violations, none
+  // alarming alone, adding up across the order.
+  //
+  // Calibration against the documented cases:
+  //   §10 hero    blended 1.33, worst 8  -> step 1 only (worst >= 5)   = Manager
+  //   many-small  blended 2.79, worst 3  -> step 1 only (blended >= 2) = Manager
+  //   clean quote blended 0,    worst 0  -> nothing fires
+  //   severe      blended 8,    worst 20 -> steps 1 and 2  = Manager then Finance
+  const ladderSteps = [
+    {
+      roleId: roles["SALES_MANAGER"].id,
+      stepOrder: 1,
+      minBlendedScore: 2.0,
+      minWorstLineOverage: 5.0,
+    },
+    {
+      roleId: roles["FINANCE"].id,
+      stepOrder: 2,
+      minBlendedScore: 6.0,
+      minWorstLineOverage: 12.0,
+    },
+  ];
 
-  if (existingSteps === 0) {
-    await prisma.approvalPolicyStep.createMany({
-      data: [
-        {
-          approvalPolicyId: defaultPolicy.id,
-          roleId: roles["SALES_MANAGER"].id,
-          stepOrder: 1,
-          minBlendedScore: 5.0,
-          minWorstLineOverage: 5.0,
-        },
-        {
-          approvalPolicyId: defaultPolicy.id,
-          roleId: roles["FINANCE"].id,
-          stepOrder: 2,
-          minBlendedScore: 15.0,
-          minWorstLineOverage: 15.0,
-        },
-      ],
+  // Upsert rather than create-if-empty, so re-running the seed actually applies
+  // threshold changes instead of silently keeping the old ladder.
+  for (const step of ladderSteps) {
+    const existing = await prisma.approvalPolicyStep.findFirst({
+      where: { approvalPolicyId: defaultPolicy.id, stepOrder: step.stepOrder },
     });
+
+    if (existing) {
+      await prisma.approvalPolicyStep.update({
+        where: { id: existing.id },
+        data: step,
+      });
+    } else {
+      await prisma.approvalPolicyStep.create({
+        data: { approvalPolicyId: defaultPolicy.id, ...step },
+      });
+    }
   }
   console.log("✔ Default approval ladder seeded");
+
+  // ==========================================================================
+  // 10. Warehouses & Inventory  (§9 steps 1 and 5)
+  // ==========================================================================
+  const warehousesData = [
+    {
+      code: "WH-MAIN",
+      name: "Main Warehouse",
+      address: "Plot 12, Industrial Area, Bengaluru",
+      shippingWeight: 1.0, // cheapest to ship from — the split prefers this
+      priority: 10,
+    },
+    {
+      code: "WH-EAST",
+      name: "East Depot",
+      address: "Sector 5, Salt Lake, Kolkata",
+      shippingWeight: 1.8,
+      priority: 5,
+    },
+  ];
+
+  const warehouses = {};
+  for (const w of warehousesData) {
+    warehouses[w.code] = await prisma.warehouse.upsert({
+      where: { code: w.code },
+      update: w,
+      create: w,
+    });
+  }
+  console.log("✔ Warehouses seeded");
+
+  const productBySku = {};
+  for (const p of productsData) {
+    productBySku[p.sku] = await prisma.product.findUnique({
+      where: { sku: p.sku },
+    });
+  }
+
+  // Stock is deliberately arranged so that NEITHER warehouse alone can cover a
+  // 12-unit laptop order: Main holds 5, East holds 9. That is what forces the
+  // two-warehouse split in §9 step 5 instead of it being a happy accident.
+  // HW-SERVER-2U is stocked only in East, and SRV/SUB lines are non-stocked.
+  const inventoryData = [
+    { sku: "HW-LAPTOP-15", code: "WH-MAIN", availableQty: 5, reorderLevel: 3 },
+    { sku: "HW-LAPTOP-15", code: "WH-EAST", availableQty: 9, reorderLevel: 3 },
+    { sku: "HW-SERVER-2U", code: "WH-MAIN", availableQty: 0, reorderLevel: 2 },
+    { sku: "HW-SERVER-2U", code: "WH-EAST", availableQty: 4, reorderLevel: 2 },
+  ];
+
+  for (const inv of inventoryData) {
+    const productId = productBySku[inv.sku].id;
+    const warehouseId = warehouses[inv.code].id;
+
+    await prisma.inventory.upsert({
+      where: { warehouseId_productId: { warehouseId, productId } },
+      update: {
+        availableQty: inv.availableQty,
+        reorderLevel: inv.reorderLevel,
+      },
+      create: {
+        warehouseId,
+        productId,
+        availableQty: inv.availableQty,
+        reservedQty: 0,
+        reorderLevel: inv.reorderLevel,
+      },
+    });
+  }
+  console.log("✔ Inventory seeded (laptop stock forces a two-warehouse split)");
+
+  // ==========================================================================
+  // 11. Subscription Plans  (§9 steps 1 and 6)
+  // ==========================================================================
+  const subscriptionProductId = productBySku["SUB-CLOUD-ENT"].id;
+
+  const plansData = [
+    {
+      name: "Cloud Enterprise — Monthly",
+      billingInterval: "MONTHLY",
+      price: 60.0,
+      prorationEnabled: true,
+      cancellationRefundPercent: 0.0,
+    },
+    {
+      name: "Cloud Enterprise — Quarterly",
+      billingInterval: "QUARTERLY",
+      price: 170.0,
+      prorationEnabled: true,
+      cancellationRefundPercent: 50.0,
+    },
+    {
+      name: "Cloud Enterprise — Yearly",
+      billingInterval: "YEARLY",
+      price: 640.0,
+      prorationEnabled: true,
+      cancellationRefundPercent: 75.0,
+    },
+  ];
+
+  for (const plan of plansData) {
+    const existing = await prisma.subscriptionPlan.findFirst({
+      where: { name: plan.name },
+    });
+
+    if (existing) {
+      await prisma.subscriptionPlan.update({
+        where: { id: existing.id },
+        data: { ...plan, productId: subscriptionProductId },
+      });
+    } else {
+      await prisma.subscriptionPlan.create({
+        data: { ...plan, productId: subscriptionProductId },
+      });
+    }
+  }
+  console.log("✔ Subscription plans seeded");
+
+  // ==========================================================================
+  // 12. Upsell / Cross-sell pairings  (§9 step 4)
+  //
+  // PDF §4-A6 says pairings come from "historical co purchase data". There is
+  // no history on a fresh database, so these are entered by hand — coPurchaseCount
+  // stands in for the observed frequency and drives ranking alongside
+  // Product.isPromoted. minMarginPercent keeps thin-margin suggestions hidden.
+  // ==========================================================================
+  const coPurchaseData = [
+    { source: "HW-LAPTOP-15", suggested: "SRV-SETUP-01", coPurchaseCount: 48, weight: 1.5, minMarginPercent: 10.0 },
+    { source: "HW-LAPTOP-15", suggested: "SUB-CLOUD-ENT", coPurchaseCount: 35, weight: 1.2, minMarginPercent: 20.0 },
+    { source: "HW-SERVER-2U", suggested: "SRV-CONSULT-01", coPurchaseCount: 27, weight: 1.4, minMarginPercent: 10.0 },
+    { source: "HW-SERVER-2U", suggested: "SRV-SETUP-01", coPurchaseCount: 19, weight: 1.0, minMarginPercent: 10.0 },
+    { source: "SRV-CONSULT-01", suggested: "SUB-CLOUD-ENT", coPurchaseCount: 12, weight: 0.9, minMarginPercent: 20.0 },
+  ];
+
+  for (const cp of coPurchaseData) {
+    const sourceProductId = productBySku[cp.source].id;
+    const suggestedProductId = productBySku[cp.suggested].id;
+
+    await prisma.coPurchaseRule.upsert({
+      where: {
+        sourceProductId_suggestedProductId: { sourceProductId, suggestedProductId },
+      },
+      update: {
+        coPurchaseCount: cp.coPurchaseCount,
+        weight: cp.weight,
+        minMarginPercent: cp.minMarginPercent,
+        isActive: true,
+      },
+      create: {
+        sourceProductId,
+        suggestedProductId,
+        coPurchaseCount: cp.coPurchaseCount,
+        weight: cp.weight,
+        minMarginPercent: cp.minMarginPercent,
+      },
+    });
+  }
+  console.log("✔ Co-purchase (upsell) rules seeded");
 
   console.log("Seeding completed successfully!");
 }
