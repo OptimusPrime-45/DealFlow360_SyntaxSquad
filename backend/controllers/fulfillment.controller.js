@@ -110,10 +110,6 @@ export async function getFulfillmentPlan(
                         item.warehouse
                             .shippingWeight,
 
-                    priority:
-                        item.warehouse
-                            .priority,
-
                     isActive:
                         item.warehouse
                             .isActive

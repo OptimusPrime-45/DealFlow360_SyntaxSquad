@@ -576,16 +576,35 @@ model Warehouse {
   /// Relative cost of shipping from here. The split algorithm minimises the
   /// number of warehouses first, then breaks ties on this (PDF §4-A4).
   shippingWeight Decimal @default(1) @map("shipping_weight") @db.Decimal(6, 2)
-  priority       Int     @default(0)
   isActive       Boolean @default(true) @map("is_active")
 
   inventory   Inventory[]
   allocations FulfillmentAllocation[]
+  routesFrom  WarehouseShippingWeight[] @relation("RoutesFrom")
+  routesTo    WarehouseShippingWeight[] @relation("RoutesTo")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("warehouses")
+}
+
+/// Pairwise relational shipping weight between two warehouses.
+/// Replaces single-scalar warehouse shipping weight with a route-based model.
+model WarehouseShippingWeight {
+  id              String    @id @default(cuid())
+  fromWarehouseId String    @map("from_warehouse_id")
+  toWarehouseId   String    @map("to_warehouse_id")
+  fromWarehouse   Warehouse @relation("RoutesFrom", fields: [fromWarehouseId], references: [id], onDelete: Cascade)
+  toWarehouse     Warehouse @relation("RoutesTo", fields: [toWarehouseId], references: [id], onDelete: Cascade)
+  weight          Decimal   @default(1) @map("weight") @db.Decimal(6, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([fromWarehouseId, toWarehouseId])
+  @@index([toWarehouseId])
+  @@map("warehouse_shipping_weights")
 }
 
 model Inventory {
