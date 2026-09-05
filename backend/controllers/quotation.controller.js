@@ -54,10 +54,17 @@ const generateQuotationNumber = async () => {
 export const getQuotations = asyncHandler(async (req, res) => {
   const { status, customerId, salesRepId, search } = req.query;
 
+  const userRole = req.user?.role?.code;
+  const isSalesRep = userRole === "SALES_REP";
+
   const where = {
     ...(status && { status: String(status) }),
     ...(customerId && { customerId: String(customerId) }),
-    ...(salesRepId && { salesRepId: String(salesRepId) }),
+    // Sales rep must ONLY see quotations given by them.
+    // Sales manager / Admin sees all quotations, or can filter by salesRepId if provided.
+    ...(isSalesRep
+      ? { salesRepId: req.user.id }
+      : salesRepId && { salesRepId: String(salesRepId) }),
     ...(search && {
       OR: [
         { quotationNumber: { contains: String(search), mode: "insensitive" } },
@@ -115,6 +122,11 @@ export const getQuotationById = asyncHandler(async (req, res) => {
 
   if (!quotation) {
     throw new ApiError(404, "Quotation not found");
+  }
+
+  // Sales rep cannot view quotations authored by other reps
+  if (req.user?.role?.code === "SALES_REP" && quotation.salesRepId !== req.user.id) {
+    throw new ApiError(403, "Forbidden: You only have access to your own quotations");
   }
 
   return res
@@ -345,6 +357,10 @@ export const deleteQuotation = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Quotation not found");
   }
 
+  if (req.user?.role?.code === "SALES_REP" && quotation.salesRepId !== req.user.id) {
+    throw new ApiError(403, "Forbidden: You can only delete your own quotations");
+  }
+
   if (quotation.status !== "DRAFT" && quotation.status !== "CANCELLED") {
     throw new ApiError(400, "Only draft or cancelled quotations can be deleted");
   }
@@ -378,11 +394,15 @@ export const submitQuotation = asyncHandler(async (req, res) => {
 
   const quotation = await prisma.quotation.findUnique({
     where: { id },
-    select: { id: true, status: true, quotationNumber: true },
+    select: { id: true, status: true, quotationNumber: true, salesRepId: true },
   });
 
   if (!quotation) {
     throw new ApiError(404, "Quotation not found");
+  }
+
+  if (req.user?.role?.code === "SALES_REP" && quotation.salesRepId !== req.user.id) {
+    throw new ApiError(403, "Forbidden: You can only submit your own quotations");
   }
 
   // Only a draft (or a quote sent back for revision) can be submitted.

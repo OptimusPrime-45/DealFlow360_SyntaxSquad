@@ -20,11 +20,15 @@ export const generatePortalLink = asyncHandler(async (req, res) => {
   // 1. Verify that the quotation exists in the database
   const quotation = await prisma.quotation.findUnique({
     where: { id: quotationId },
-    select: { id: true, customerId: true, quotationNumber: true }
+    select: { id: true, customerId: true, quotationNumber: true, salesRepId: true }
   });
 
   if (!quotation) {
     throw new ApiError(404, `Quotation with ID "${quotationId}" was not found`);
+  }
+
+  if (req.user?.role?.code === "SALES_REP" && quotation.salesRepId !== req.user.id) {
+    throw new ApiError(403, "Forbidden: You can only generate portal links for your own quotations");
   }
 
   const portalSecret = process.env.PORTAL_JWT_SECRET;

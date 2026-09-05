@@ -38,14 +38,18 @@ const updateLineSchema = z.object({
 });
 
 /** Load a quotation and assert it can still be edited. */
-const loadEditableQuotation = async (quotationId) => {
+const loadEditableQuotation = async (quotationId, reqUser = null) => {
   const quotation = await prisma.quotation.findUnique({
     where: { id: quotationId },
-    select: { id: true, status: true, quotationNumber: true },
+    select: { id: true, status: true, quotationNumber: true, salesRepId: true },
   });
 
   if (!quotation) {
     throw new ApiError(404, "Quotation not found");
+  }
+
+  if (reqUser?.role?.code === "SALES_REP" && quotation.salesRepId !== reqUser.id) {
+    throw new ApiError(403, "Forbidden: You can only edit your own quotations");
   }
 
   if (!EDITABLE_STATUSES.includes(quotation.status)) {
@@ -66,7 +70,7 @@ export const addQuotationLine = asyncHandler(async (req, res) => {
   const { id: quotationId } = req.params;
   const input = addLineSchema.parse(req.body);
 
-  await loadEditableQuotation(quotationId);
+  await loadEditableQuotation(quotationId, req.user);
 
   const product = await prisma.product.findUnique({
     where: { id: input.productId },
@@ -130,7 +134,7 @@ export const updateQuotationLine = asyncHandler(async (req, res) => {
   const { id: quotationId, lineId } = req.params;
   const input = updateLineSchema.parse(req.body);
 
-  await loadEditableQuotation(quotationId);
+  await loadEditableQuotation(quotationId, req.user);
 
   const line = await prisma.quotationLine.findFirst({
     where: { id: lineId, quotationId },
@@ -169,7 +173,7 @@ export const updateQuotationLine = asyncHandler(async (req, res) => {
 export const deleteQuotationLine = asyncHandler(async (req, res) => {
   const { id: quotationId, lineId } = req.params;
 
-  await loadEditableQuotation(quotationId);
+  await loadEditableQuotation(quotationId, req.user);
 
   const line = await prisma.quotationLine.findFirst({
     where: { id: lineId, quotationId },
@@ -224,6 +228,10 @@ export const getUpsellSuggestions = asyncHandler(async (req, res) => {
 
   if (!quotation) {
     throw new ApiError(404, "Quotation not found");
+  }
+
+  if (req.user?.role?.code === "SALES_REP" && quotation.salesRepId !== req.user.id) {
+    throw new ApiError(403, "Forbidden: You can only view suggestions for your own quotations");
   }
 
   const presentProductIds = quotation.lines.map((l) => l.productId);
