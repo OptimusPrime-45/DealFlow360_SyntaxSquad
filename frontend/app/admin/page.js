@@ -76,10 +76,10 @@ export default function AdminOverviewPage() {
     },
     {
       step: "Step 1",
-      label: "Subscription plans",
-      ok: state.plans.length > 0,
-      detail: `${state.plans.length} plan(s)`,
-      href: "/admin/plans",
+      label: "Subscription products & plans",
+      ok: state.plans.length > 0 && state.products.some((p) => p.productType === "SUBSCRIPTION"),
+      detail: `${state.products.filter((p) => p.productType === "SUBSCRIPTION").length} SaaS product(s), ${state.plans.length} recurring plan(s)`,
+      href: "/admin/subscription-products",
     },
     {
       step: "Step 2",
@@ -121,11 +121,13 @@ export default function AdminOverviewPage() {
       href: "/admin/warehouses",
     },
     {
-      step: "Step 6",
-      label: "Subscription products",
-      ok: state.products.some((p) => p.productType === "SUBSCRIPTION"),
-      detail: `${state.products.filter((p) => p.productType === "SUBSCRIPTION").length} subscription product(s)`,
-      href: "/admin/products",
+      step: "Catalogue",
+      label: "Standard products & services",
+      ok:
+        state.products.some((p) => p.productType === "ONE_TIME") &&
+        state.products.some((p) => p.productType === "SERVICE"),
+      detail: `${state.products.filter((p) => p.productType === "ONE_TIME").length} physical product(s), ${state.products.filter((p) => p.productType === "SERVICE").length} service(s)`,
+      href: "/admin/services",
     },
   ];
 

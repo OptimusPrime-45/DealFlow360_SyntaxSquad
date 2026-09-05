@@ -23,6 +23,8 @@ import catalogRoutes from "./routes/catalog.routes.js";
 import quotationRoutes from "./routes/quotation.routes.js";
 import warehouseRoutes from "./routes/warehouse.routes.js";
 import subscriptionPlanRoutes from "./routes/subscriptionPlan.routes.js";
+import subscriptionProductRoutes from "./routes/subscriptionProduct.routes.js";
+import serviceRoutes from "./routes/service.routes.js";
 import upsellRuleRoutes from "./routes/upsellRule.routes.js";
 import priceListRoutes from "./routes/priceList.routes.js";
 
@@ -101,6 +103,8 @@ app.post("/api/quotations/:id/portal-link", requireInternal, generatePortalLink)
 app.use("/api/quotations", quotationRoutes);
 app.use("/api/warehouses", warehouseRoutes);
 app.use("/api/subscription-plans", subscriptionPlanRoutes);
+app.use("/api/subscription-products", subscriptionProductRoutes);
+app.use("/api/services", serviceRoutes);
 app.use("/api/upsell-rules", upsellRuleRoutes);
 app.use("/api/price-lists", priceListRoutes);
 app.use("/api/governance", governanceRoutes);

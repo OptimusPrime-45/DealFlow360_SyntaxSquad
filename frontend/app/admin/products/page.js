@@ -1,13 +1,8 @@
 "use client";
 
 /**
- * Products, categories and variants — PDF §4-A2.
- * "General Info: Name, Category, Price, Unit, Tax, Description ·
- *  Variants: Attribute (Size or Pack), Values, Extra prices."
- *
- * Cost price matters more than it looks: it is the ONLY source of margin in the
- * system. Every margin figure on the quotation, the upsell panel and the
- * approval screen derives from it.
+ * Products — Physical & Standard Product Catalogue.
+ * Simplified management of physical products (Laptops, Monitors, Routers, Office Equipment).
  */
 
 import React, { useState, useEffect } from "react";
@@ -17,21 +12,25 @@ import { Button, Card, Table, Badge } from "../../../components/ui/index.js";
 import { Field, AdminHeader, Banners, EmptyRow } from "../../../components/admin/AdminUI.jsx";
 
 const EMPTY_PRODUCT = {
-  sku: "", name: "", description: "", categoryId: "",
-  productType: "ONE_TIME", basePrice: "", costPrice: "",
-  unit: "unit", taxRate: 0, isPromoted: false,
+  sku: "",
+  name: "",
+  description: "",
+  categoryId: "",
+  basePrice: "",
+  costPrice: "",
 };
 
 export default function ProductsPage() {
-  const products = useResource("/products", "products");
+  const products = useResource("/products?productType=ONE_TIME", "products");
   const [categories, setCategories] = useState([]);
   const [form, setForm] = useState(EMPTY_PRODUCT);
   const [categoryName, setCategoryName] = useState("");
-  const [variantFor, setVariantFor] = useState(null);
-  const [variant, setVariant] = useState({ attribute: "", value: "", extraPrice: 0 });
 
   const loadCategories = () =>
-    apiClient.get("/categories").then((d) => setCategories(d.categories || [])).catch(() => {});
+    apiClient
+      .get("/categories?type=ONE_TIME")
+      .then((d) => setCategories(d.categories || []))
+      .catch(() => {});
 
   useEffect(() => {
     loadCategories();
@@ -39,8 +38,9 @@ export default function ProductsPage() {
 
   const createCategory = async (e) => {
     e.preventDefault();
+    if (!categoryName.trim()) return;
     const ok = await products.run(
-      () => apiClient.post("/categories", { name: categoryName }),
+      () => apiClient.post("/categories", { name: categoryName.trim(), type: "ONE_TIME" }),
       `Category "${categoryName}" created`
     );
     if (ok) {
@@ -53,37 +53,19 @@ export default function ProductsPage() {
     e.preventDefault();
     const ok = await products.create(
       {
-        sku: form.sku,
-        name: form.name,
-        description: form.description || null,
+        sku: form.sku.trim(),
+        name: form.name.trim(),
+        description: form.description?.trim() || null,
         categoryId: form.categoryId,
-        productType: form.productType,
-        basePrice: Number(form.basePrice),
-        costPrice: Number(form.costPrice),
-        unit: form.unit || "unit",
-        taxRate: Number(form.taxRate) || 0,
-        isPromoted: !!form.isPromoted,
+        productType: "ONE_TIME",
+        basePrice: Number(form.basePrice) || 0,
+        costPrice: Number(form.costPrice) || 0,
+        unit: "unit",
+        taxRate: 18,
       },
       `Product ${form.sku} created`
     );
     if (ok) setForm(EMPTY_PRODUCT);
-  };
-
-  const addVariant = async (e) => {
-    e.preventDefault();
-    const ok = await products.run(
-      () =>
-        apiClient.post(`/products/${variantFor}/variants`, {
-          attribute: variant.attribute,
-          value: variant.value,
-          extraPrice: Number(variant.extraPrice) || 0,
-        }),
-      "Variant added"
-    );
-    if (ok) {
-      setVariant({ attribute: "", value: "", extraPrice: 0 });
-      setVariantFor(null);
-    }
   };
 
   const margin = (p) => {
@@ -96,123 +78,122 @@ export default function ProductsPage() {
       <AdminHeader
         section="Catalogue"
         title="Products"
-        description="Cost price is the only source of margin in the system — every margin figure the rep and the approver see derives from it."
+        description="Physical and standard products catalogue (laptops, workstations, network hardware, equipment)."
       />
       <Banners error={products.error} notice={products.notice} />
 
-      <Card title="Add a Category" className="mb-5">
+      {/* Quick Category Add */}
+      <Card title="Add a Product Category" className="mb-4">
         <form onSubmit={createCategory} className="flex items-end gap-3">
-          <Field label="Category name" required placeholder="Professional Services"
-            value={categoryName} onChange={setCategoryName} className="max-w-sm" />
+          <Field
+            label="New Category"
+            required
+            placeholder="e.g. Hardware, Workstations, Peripherals"
+            value={categoryName}
+            onChange={setCategoryName}
+            className="max-w-sm"
+          />
           <Button type="submit" variant="secondary" size="sm" disabled={products.busy}>
             Create Category
           </Button>
-          <span className="text-[11px] text-[#6C757D] pb-2">
-            Categories carry their own discount ceilings.
-          </span>
         </form>
       </Card>
 
-      <Card title="Add a Product" className="mb-5">
-        <form onSubmit={createProduct} className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Field label="SKU" required placeholder="HW-LAPTOP-15"
-            value={form.sku} onChange={(v) => setForm((f) => ({ ...f, sku: v }))} />
-          <Field label="Name" required placeholder="Enterprise Laptop"
-            value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} />
-          <Field label="Category" required
+      {/* Simple Add Product Form */}
+      <Card title="Add Product" className="mb-5">
+        <form onSubmit={createProduct} className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+          <Field
+            label="SKU"
+            required
+            placeholder="HW-LAPTOP-15"
+            value={form.sku}
+            onChange={(v) => setForm((f) => ({ ...f, sku: v }))}
+          />
+          <Field
+            label="Product Name"
+            required
+            placeholder="Enterprise Laptop Pro 15"
+            value={form.name}
+            onChange={(v) => setForm((f) => ({ ...f, name: v }))}
+          />
+          <Field
+            label="Category"
+            required
             options={categories.map((c) => ({ value: c.id, label: c.name }))}
-            value={form.categoryId} onChange={(v) => setForm((f) => ({ ...f, categoryId: v }))} />
-          <Field label="Type" required
-            options={[
-              { value: "ONE_TIME", label: "One-time" },
-              { value: "SERVICE", label: "Service" },
-              { value: "SUBSCRIPTION", label: "Subscription" },
-            ]}
-            value={form.productType}
-            onChange={(v) => setForm((f) => ({ ...f, productType: v }))} />
-
-          <Field label="List price" type="number" required min={0} step="0.01"
-            value={form.basePrice} onChange={(v) => setForm((f) => ({ ...f, basePrice: v }))} />
-          <Field label="Cost price" type="number" required min={0} step="0.01"
-            value={form.costPrice} onChange={(v) => setForm((f) => ({ ...f, costPrice: v }))}
-            hint="Drives every margin figure" />
-          <Field label="Unit" value={form.unit}
-            onChange={(v) => setForm((f) => ({ ...f, unit: v }))} />
-          <Field label="Tax rate %" type="number" min={0} step="0.5"
-            value={form.taxRate} onChange={(v) => setForm((f) => ({ ...f, taxRate: v }))} />
-
-          <div className="md:col-span-3">
-            <Field label="Description" value={form.description}
-              onChange={(v) => setForm((f) => ({ ...f, description: v }))} />
+            value={form.categoryId}
+            onChange={(v) => setForm((f) => ({ ...f, categoryId: v }))}
+          />
+          <Field
+            label="Price (₹)"
+            type="number"
+            required
+            min={0}
+            step="0.01"
+            placeholder="1000.00"
+            value={form.basePrice}
+            onChange={(v) => setForm((f) => ({ ...f, basePrice: v }))}
+          />
+          <Field
+            label="Cost (₹)"
+            type="number"
+            required
+            min={0}
+            step="0.01"
+            placeholder="700.00"
+            value={form.costPrice}
+            onChange={(v) => setForm((f) => ({ ...f, costPrice: v }))}
+          />
+          <div className="md:col-span-4">
+            <Field
+              label="Description (Optional)"
+              placeholder="Brief description or specifications..."
+              value={form.description}
+              onChange={(v) => setForm((f) => ({ ...f, description: v }))}
+            />
           </div>
-          <div className="flex items-end gap-4">
-            <Field label="Promoted" type="checkbox" value={form.isPromoted}
-              onChange={(v) => setForm((f) => ({ ...f, isPromoted: v }))} />
-            <Button type="submit" variant="primary" size="sm" disabled={products.busy}>
-              Create Product
+          <div>
+            <Button type="submit" variant="primary" size="sm" disabled={products.busy} className="w-full">
+              Add Product
             </Button>
           </div>
         </form>
       </Card>
 
-      <Table headers={["SKU", "Name", "Category", "Type", "List", "Cost", "Margin", "Tax", ""]}>
+      {/* Simplified Products Table */}
+      <Table headers={["SKU", "Product Name", "Category", "Price", "Cost", "Margin", "Actions"]}>
         {products.items.length === 0 && !products.loading && (
-          <EmptyRow colSpan={9}>No products yet.</EmptyRow>
+          <EmptyRow colSpan={7}>No physical products configured.</EmptyRow>
         )}
         {products.items.map((p) => (
-          <tr key={p.id} className="border-t border-[#E9ECEF]">
-            <td className="px-4 py-3">
-              <div className="text-sm font-medium">{p.sku}</div>
-              {p.isPromoted && <Badge variant="warning" size="sm">promoted</Badge>}
+          <tr key={p.id} className="border-b border-[#E9ECEF] hover:bg-[#F8F9FA]">
+            <td className="px-4 py-3 font-mono text-xs font-semibold text-[#212529]">{p.sku}</td>
+            <td className="px-4 py-3 font-medium text-sm text-[#212529]">{p.name}</td>
+            <td className="px-4 py-3 text-xs text-[#495057]">{p.category?.name || "—"}</td>
+            <td className="px-4 py-3 text-sm font-semibold text-[#212529]">
+              ₹{Number(p.basePrice).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </td>
-            <td className="px-4 py-3 text-sm">{p.name}</td>
-            <td className="px-4 py-3 text-sm text-[#6C757D]">{p.category?.name}</td>
-            <td className="px-4 py-3"><Badge variant="info" size="sm">{p.productType}</Badge></td>
-            <td className="px-4 py-3 text-sm">₹{Number(p.basePrice).toLocaleString("en-IN")}</td>
-            <td className="px-4 py-3 text-sm text-[#6C757D]">
-              ₹{Number(p.costPrice).toLocaleString("en-IN")}
+            <td className="px-4 py-3 text-xs text-[#6C757D]">
+              ₹{Number(p.costPrice).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
             </td>
             <td className="px-4 py-3">
-              <span className={`text-sm font-semibold ${
-                Number(margin(p)) < 15 ? "text-[#DC3545]" : "text-[#28A745]"
-              }`}>
+              <Badge variant={Number(margin(p)) < 15 ? "danger" : "success"} size="sm">
                 {margin(p)}%
-              </span>
+              </Badge>
             </td>
-            <td className="px-4 py-3 text-sm text-[#6C757D]">{Number(p.taxRate).toFixed(1)}%</td>
-            <td className="px-4 py-3">
-              <div className="flex gap-2">
-                <Button variant="secondary" size="sm" className="text-xs"
-                  onClick={() => setVariantFor(variantFor === p.id ? null : p.id)}>
-                  Variant
-                </Button>
-                <Button variant="danger" size="sm" className="text-xs" disabled={products.busy}
-                  onClick={() => products.remove(p.id, `${p.sku} deleted`)}>
-                  Delete
-                </Button>
-              </div>
+            <td className="px-4 py-3 text-right">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => products.remove(p.id, `Product ${p.sku} removed`)}
+                className="text-xs text-[#DC3545] hover:bg-[#FDECEA]"
+              >
+                Delete
+              </Button>
             </td>
           </tr>
         ))}
       </Table>
-
-      {variantFor && (
-        <Card title="Add Variant" subtitle="Attribute, value and the extra price it adds" className="mt-5">
-          <form onSubmit={addVariant} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-            <Field label="Attribute" required placeholder="Size"
-              value={variant.attribute}
-              onChange={(v) => setVariant((s) => ({ ...s, attribute: v }))} />
-            <Field label="Value" required placeholder="Large"
-              value={variant.value} onChange={(v) => setVariant((s) => ({ ...s, value: v }))} />
-            <Field label="Extra price" type="number" min={0} step="0.01"
-              value={variant.extraPrice}
-              onChange={(v) => setVariant((s) => ({ ...s, extraPrice: v }))} />
-            <Button type="submit" variant="primary" size="sm" disabled={products.busy}>
-              Add Variant
-            </Button>
-          </form>
-        </Card>
-      )}
     </>
   );
 }

@@ -8,6 +8,7 @@ import { asyncHandler } from "../utils/async-handler.js";
 const categorySchema = z.object({
   name: z.string().min(2, "Category name is required"),
   description: z.string().optional(),
+  type: z.enum(["ONE_TIME", "SERVICE", "SUBSCRIPTION"]).optional(),
 });
 
 const productSchema = z.object({
@@ -38,7 +39,9 @@ const variantSchema = z.object({
  */
 
 export const getCategories = asyncHandler(async (req, res) => {
-  const categories = await prisma.productCategory.findMany({
+  const { type } = req.query;
+
+  const allCategories = await prisma.productCategory.findMany({
     include: {
       _count: {
         select: { products: true },
@@ -47,9 +50,43 @@ export const getCategories = asyncHandler(async (req, res) => {
     orderBy: { name: "asc" },
   });
 
+  if (!type) {
+    return res
+      .status(200)
+      .json(new ApiResponse(200, { categories: allCategories }, "Categories retrieved"));
+  }
+
+  const filtered = allCategories.filter((c) => {
+    const desc = c.description || "";
+    const name = c.name.toLowerCase();
+
+    if (type === "ONE_TIME") {
+      if (desc.includes("[TYPE:ONE_TIME]")) return true;
+      if (desc.includes("[TYPE:SERVICE]") || desc.includes("[TYPE:SUBSCRIPTION]")) return false;
+      if (name.includes("service") || name.includes("subscription") || name.includes("saas")) return false;
+      return true;
+    }
+
+    if (type === "SERVICE") {
+      if (desc.includes("[TYPE:SERVICE]")) return true;
+      if (desc.includes("[TYPE:ONE_TIME]") || desc.includes("[TYPE:SUBSCRIPTION]")) return false;
+      if (name.includes("hardware") || name.includes("subscription") || name.includes("saas")) return false;
+      return name.includes("service") || name.includes("support") || name.includes("consulting") || name.includes("maintenance");
+    }
+
+    if (type === "SUBSCRIPTION") {
+      if (desc.includes("[TYPE:SUBSCRIPTION]")) return true;
+      if (desc.includes("[TYPE:ONE_TIME]") || desc.includes("[TYPE:SERVICE]")) return false;
+      if (name.includes("hardware")) return false;
+      return name.includes("subscription") || name.includes("saas") || name.includes("cloud") || name.includes("software");
+    }
+
+    return true;
+  });
+
   return res
     .status(200)
-    .json(new ApiResponse(200, { categories }, "Categories retrieved"));
+    .json(new ApiResponse(200, { categories: filtered }, "Categories retrieved"));
 });
 
 export const createCategory = asyncHandler(async (req, res) => {
@@ -63,10 +100,15 @@ export const createCategory = asyncHandler(async (req, res) => {
     throw new ApiError(409, "A category with this name already exists");
   }
 
+  let description = validated.description?.trim() || "";
+  if (validated.type && !description.includes(`[TYPE:${validated.type}]`)) {
+    description = description ? `${description} [TYPE:${validated.type}]` : `[TYPE:${validated.type}]`;
+  }
+
   const category = await prisma.productCategory.create({
     data: {
       name: validated.name.trim(),
-      description: validated.description?.trim() || null,
+      description: description || null,
     },
   });
 
