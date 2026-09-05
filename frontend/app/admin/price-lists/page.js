@@ -47,6 +47,7 @@ export default function PriceListsPage() {
   return (
     <>
       <AdminHeader
+        section="Catalogue"
         title="Price Lists"
         description="Per-product price overrides, scoped by currency. Useful for tier-based or regional pricing."
       />

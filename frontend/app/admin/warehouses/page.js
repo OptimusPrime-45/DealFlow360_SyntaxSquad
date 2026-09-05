@@ -75,6 +75,7 @@ export default function WarehousesPage() {
   return (
     <>
       <AdminHeader
+        section="Operations"
         title="Warehouses & Stock"
         description="Fulfillment sources for the auto-split. Shipping weight is the tie-breaker when more than one warehouse could serve a line."
       />

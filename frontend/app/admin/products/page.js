@@ -76,6 +76,7 @@ export default function ProductsPage() {
   return (
     <>
       <AdminHeader
+        section="Catalogue"
         title="Products"
         description="Physical and standard products catalogue (laptops, workstations, network hardware, equipment)."
       />

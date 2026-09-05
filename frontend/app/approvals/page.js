@@ -153,7 +153,12 @@ export default function ApprovalsPage() {
                     <span className="text-sm font-semibold text-[#212529]">{q.quotationNumber}</span>
                     <span className="text-sm font-semibold">{money(q.grandTotal)}</span>
                   </div>
-                  <div className="text-[11px] text-[#6C757D] mt-1">{q.customer?.name}</div>
+                  <div className="text-[11px] text-[#6C757D] mt-1 flex items-center justify-between">
+                    <span>{q.customer?.name}</span>
+                    {q.salesRep?.fullName && (
+                      <span className="text-[#714B67] font-medium">Rep: {q.salesRep.fullName}</span>
+                    )}
+                  </div>
                   <div className="flex gap-2 mt-2">
                     <Badge variant="warning" size="sm">
                       blended {Number(q.blendedScore).toFixed(2)}
@@ -181,7 +186,11 @@ export default function ApprovalsPage() {
               <>
                 <Card
                   title={`${detail.quotation.quotationNumber} — why this is on your desk`}
-                  subtitle={`${detail.quotation.customer?.name} · ${detail.quotation.customerTier?.name}`}
+                  subtitle={`${detail.quotation.customer?.name} · ${detail.quotation.customerTier?.name || "Standard Tier"}${
+                    detail.quotation.salesRep
+                      ? ` · Assigned Rep: ${detail.quotation.salesRep.fullName} (${detail.quotation.salesRep.email})`
+                      : ""
+                  }`}
                 >
                   <div className="grid grid-cols-3 gap-4 mb-4">
                     <div>
@@ -239,7 +248,7 @@ export default function ApprovalsPage() {
                     onChange={(e) => setReason(e.target.value)}
                     rows={2}
                     placeholder="Reason (required to reject or return)"
-                    className="w-full px-3 py-2 text-sm border border-[#DEE2E6] rounded-[6px] mb-3"
+                    className="w-full px-3 py-2 text-sm bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] mb-3 placeholder:text-[#868E96] focus:border-[#714B67] focus:outline-none"
                   />
 
                   <div className="space-y-2">

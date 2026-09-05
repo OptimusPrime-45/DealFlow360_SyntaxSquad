@@ -34,6 +34,8 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
   const [error, setError] = useState(null);
   const [quotation, setQuotation] = useState(null);
   const [acceptedMessage, setAcceptedMessage] = useState(false);
+  const [acceptingProposal, setAcceptingProposal] = useState(false);
+  const [acceptResult, setAcceptResult] = useState(null);
 
   // Negotiation state (Feature 2)
   const [negotiations, setNegotiations] = useState([]);
@@ -174,6 +176,33 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
       });
     } finally {
       setSubmittingNegotiation(false);
+    }
+  };
+
+  // Handle customer accepting commercial proposal
+  const handleAcceptProposal = async () => {
+    setAcceptingProposal(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/api/portal/accept${quoteQuery}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error?.message || data.message || 'Failed to accept proposal');
+      }
+      setAcceptResult(data.data);
+      setAcceptedMessage(true);
+      await loadPortalData();
+    } catch (err) {
+      console.error('Accept error:', err);
+      setError(err.message || 'Failed to record acceptance');
+    } finally {
+      setAcceptingProposal(false);
     }
   };
 
@@ -425,38 +454,57 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div>
-              <h3 className="text-base font-semibold text-gray-900">Ready to proceed or have revisions?</h3>
+              <h3 className="text-base font-semibold text-gray-900">
+                {quotation?.status === 'CONFIRMED'
+                  ? 'Proposal Confirmed & Order Created'
+                  : 'Ready to proceed or have revisions?'}
+              </h3>
               <p className="text-sm text-gray-500">
-                You can accept these terms directly or submit a counter-offer on discounts or quantities.
+                {quotation?.status === 'CONFIRMED'
+                  ? `Terms have been finalized and confirmed into an active order. Commercial invoices have been prepared.`
+                  : 'You can accept these terms directly or submit a counter-offer on discounts or quantities.'}
               </p>
             </div>
             <div className="flex items-center gap-3 w-full sm:w-auto">
-              <button
-                type="button"
-                onClick={() => setShowNegotiateModal(true)}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-lg border border-[#714B67] text-[#714B67] hover:bg-[#714B67]/5 font-medium text-sm transition-colors cursor-pointer"
-              >
-                Propose Revision / Counter
-              </button>
-              <button
-                type="button"
-                onClick={() => setAcceptedMessage(true)}
-                className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-[#714B67] hover:bg-[#5B3A53] text-white font-medium text-sm transition-colors shadow-sm cursor-pointer"
-              >
-                Accept Proposal
-              </button>
+              {quotation?.status !== 'CONFIRMED' && (
+                <button
+                  type="button"
+                  onClick={() => setShowNegotiateModal(true)}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-lg border border-[#714B67] text-[#714B67] hover:bg-[#714B67]/5 font-medium text-sm transition-colors cursor-pointer"
+                >
+                  Propose Revision / Counter
+                </button>
+              )}
+              {quotation?.status === 'CONFIRMED' ? (
+                <span className="inline-flex items-center px-6 py-2.5 rounded-lg bg-emerald-100 text-emerald-800 font-semibold text-sm">
+                  ✓ Agreement Finalized
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={acceptingProposal}
+                  onClick={handleAcceptProposal}
+                  className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-[#714B67] hover:bg-[#5B3A53] disabled:opacity-50 text-white font-medium text-sm transition-colors shadow-sm cursor-pointer"
+                >
+                  {acceptingProposal ? 'Processing...' : 'Accept Proposal'}
+                </button>
+              )}
             </div>
           </div>
 
-          {acceptedMessage && (
+          {(acceptedMessage || quotation?.status === 'CONFIRMED') && (
             <div className="mt-4 p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-sm flex items-center justify-between">
-              <span>Thank you! Acceptance recorded. Your sales executive will proceed with order confirmation.</span>
-              <button 
-                onClick={() => setAcceptedMessage(false)}
-                className="text-xs text-emerald-600 hover:text-emerald-900 font-semibold ml-4"
-              >
-                Dismiss
-              </button>
+              <span>
+                🎉 <strong>Thank you!</strong> Commercial terms accepted and order confirmed! Your sales executive is processing your order and billing.
+              </span>
+              {acceptedMessage && (
+                <button 
+                  onClick={() => setAcceptedMessage(false)}
+                  className="text-xs text-emerald-600 hover:text-emerald-900 font-semibold ml-4 cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -532,7 +580,7 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
                   <select
                     value={selectedLineId}
                     onChange={(e) => setSelectedLineId(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#714B67] focus:outline-none"
+                    className="w-full rounded-lg bg-white border border-[#CED4DA] p-2.5 text-sm text-[#212529] focus:border-[#714B67] focus:outline-none"
                   >
                     {quotation?.lines?.map((line) => (
                       <option key={line.id} value={line.id}>
@@ -551,7 +599,7 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
                     <select
                       value={requestType}
                       onChange={(e) => setRequestType(e.target.value)}
-                      className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#714B67] focus:outline-none"
+                      className="w-full rounded-lg bg-white border border-[#CED4DA] p-2.5 text-sm text-[#212529] focus:border-[#714B67] focus:outline-none"
                     >
                       <option value="DISCOUNT">Discount Revision (%)</option>
                       <option value="QUANTITY">Quantity Revision</option>
@@ -573,7 +621,7 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
                         value={proposedDiscount}
                         onChange={(e) => setProposedDiscount(e.target.value)}
                         required
-                        className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#714B67] focus:outline-none"
+                        className="w-full rounded-lg bg-white border border-[#CED4DA] p-2.5 text-sm text-[#212529] placeholder:text-[#868E96] focus:border-[#714B67] focus:outline-none"
                       />
                     </div>
                   )}
@@ -591,7 +639,7 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
                         value={proposedQty}
                         onChange={(e) => setProposedQty(e.target.value)}
                         required
-                        className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#714B67] focus:outline-none"
+                        className="w-full rounded-lg bg-white border border-[#CED4DA] p-2.5 text-sm text-[#212529] placeholder:text-[#868E96] focus:border-[#714B67] focus:outline-none"
                       />
                     </div>
                   )}
@@ -608,7 +656,7 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
                     onChange={(e) => setNegotiationMessage(e.target.value)}
                     placeholder="Provide context for your request (e.g. bulk order, budget constraints)..."
                     required
-                    className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#714B67] focus:outline-none"
+                    className="w-full rounded-lg bg-white border border-[#CED4DA] p-2.5 text-sm text-[#212529] placeholder:text-[#868E96] focus:border-[#714B67] focus:outline-none"
                   ></textarea>
                 </div>
 

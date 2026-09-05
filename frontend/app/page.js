@@ -66,8 +66,14 @@ const DESTINATIONS = [
   {
     href: "/invoicing",
     label: "Invoicing & Payments",
-    blurb: "Post invoices and record payments against orders.",
-    roles: ["ADMIN", "FINANCE"],
+    blurb: "Generate invoices, post for collection, and record payments against orders.",
+    roles: ["ADMIN", "SALES_REP", "SALES_MANAGER", "FINANCE"],
+  },
+  {
+    href: "/orders",
+    label: "Orders & Fulfillment",
+    blurb: "Track confirmed orders, warehouse inventory allocations, and deal execution.",
+    roles: ["ADMIN", "SALES_REP", "SALES_MANAGER", "FINANCE"],
   },
   {
     href: "/admin",

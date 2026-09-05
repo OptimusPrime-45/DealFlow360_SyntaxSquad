@@ -156,3 +156,85 @@ export async function confirmQuotationToOrder(
 
     return result;
 }
+
+export async function listOrders(query = {}) {
+  const { status, quotationId, customerId } = query;
+  const where = {
+    ...(status && { status }),
+    ...(quotationId && { quotationId }),
+    ...(customerId && { customerId }),
+  };
+
+  const orders = await prisma.order.findMany({
+    where,
+    include: {
+      customer: { select: { id: true, name: true, contactEmail: true } },
+      quotation: { select: { id: true, quotationNumber: true, salesRepId: true } },
+      lines: {
+        include: {
+          product: { select: { id: true, sku: true, name: true } },
+        },
+      },
+      invoices: {
+        select: { id: true, invoiceNumber: true, status: true, totalAmount: true, amountPaid: true },
+      },
+      _count: { select: { lines: true, invoices: true } },
+    },
+    orderBy: { confirmedAt: "desc" },
+  });
+
+  return orders;
+}
+
+export async function getOrderById(orderId) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      customer: true,
+      quotation: {
+        include: {
+          salesRep: { select: { id: true, fullName: true, email: true } },
+        },
+      },
+      lines: {
+        include: {
+          product: true,
+          subscriptionPlan: true,
+        },
+      },
+      invoices: {
+        include: {
+          payments: true,
+        },
+      },
+      subscriptions: true,
+      allocations: {
+        include: { warehouse: true },
+      },
+    },
+  });
+
+  return order;
+}
+
+export async function closeOrder(orderId, userId = null) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: { invoices: true },
+  });
+
+  if (!order) {
+    throw new Error(`Order with ID ${orderId} not found`);
+  }
+
+  const updatedOrder = await prisma.order.update({
+    where: { id: orderId },
+    data: { status: "COMPLETED" },
+    include: {
+      customer: true,
+      invoices: true,
+    },
+  });
+
+  return updatedOrder;
+}

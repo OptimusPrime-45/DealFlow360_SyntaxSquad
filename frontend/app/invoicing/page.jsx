@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+import apiClient from '../../lib/apiClient.js';
 
 /**
  * DealFlow360 — Invoicing & Payment Management Screen (Feature 3 / §9 Step 8)
@@ -19,6 +21,7 @@ export default function InvoicingDashboardPage() {
   // STATE MANAGEMENT
   // ==========================================================================
   const [invoices, setInvoices] = useState([]);
+  const [ordersAwaitingInvoice, setOrdersAwaitingInvoice] = useState([]);
   const [summary, setSummary] = useState({
     totalInvoiced: 0,
     totalCollected: 0,
@@ -70,7 +73,7 @@ export default function InvoicingDashboardPage() {
   };
 
   // ==========================================================================
-  // DATA FETCHING: Load Invoices and Summary from Backend
+  // DATA FETCHING: Load Invoices, Orders and Summary using Authenticated apiClient
   // ==========================================================================
   const fetchInvoices = useCallback(async () => {
     try {
@@ -82,28 +85,30 @@ export default function InvoicingDashboardPage() {
       if (statusFilter !== 'ALL') params.append('status', statusFilter);
       if (typeFilter !== 'ALL') params.append('type', typeFilter);
 
-      const url = `${API_URL}/api/invoices${params.toString() ? `?${params.toString()}` : ''}`;
-      const res = await fetch(url);
-      const json = await res.json();
+      const endpoint = `/invoices${params.toString() ? `?${params.toString()}` : ''}`;
+      const [invoiceData, ordersData] = await Promise.all([
+        apiClient.get(endpoint),
+        apiClient.get('/orders').catch(() => ({ orders: [] })),
+      ]);
 
-      if (!res.ok) {
-        throw new Error(json.error?.message || 'Failed to load invoices from server');
-      }
-
-      setInvoices(json.data.invoices || []);
-      setSummary(json.data.summary || {
+      setInvoices(invoiceData?.invoices || []);
+      setSummary(invoiceData?.summary || {
         totalInvoiced: 0,
         totalCollected: 0,
         totalOutstanding: 0,
         count: 0
       });
+
+      const ordersList = ordersData?.orders || [];
+      const awaiting = ordersList.filter((o) => (o.invoices || []).length === 0);
+      setOrdersAwaitingInvoice(awaiting);
     } catch (err) {
       console.error('Error fetching invoices:', err);
-      setError(err.message);
+      setError(err.message || 'Failed to load invoices from server');
     } finally {
       setLoading(false);
     }
-  }, [API_URL, statusFilter, typeFilter]);
+  }, [statusFilter, typeFilter]);
 
   // Load invoices on component mount or filter change
   useEffect(() => {
@@ -119,20 +124,29 @@ export default function InvoicingDashboardPage() {
   }, [notification]);
 
   // ==========================================================================
+  // ACTION: Generate Invoices for an Order
+  // ==========================================================================
+  const handleGenerateInvoicesForOrder = async (orderId, orderNumber) => {
+    try {
+      setError(null);
+      await apiClient.post(`/invoices/generate/${orderId}`, {});
+      setNotification({
+        type: 'success',
+        message: `Invoices generated successfully for Order ${orderNumber}!`
+      });
+      fetchInvoices();
+    } catch (err) {
+      setError(err.message || 'Failed to generate invoices');
+    }
+  };
+
+  // ==========================================================================
   // ACTION: Post Invoice (DRAFT -> POSTED)
   // ==========================================================================
   const handlePostInvoice = async (invoiceId, invoiceNumber) => {
     try {
       setError(null);
-      const res = await fetch(`${API_URL}/api/invoices/${invoiceId}/post`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      const json = await res.json();
-
-      if (!res.ok) {
-        throw new Error(json.error?.message || 'Failed to post invoice');
-      }
+      await apiClient.post(`/invoices/${invoiceId}/post`, {});
 
       setNotification({
         type: 'success',
@@ -142,7 +156,7 @@ export default function InvoicingDashboardPage() {
       // Refresh invoice list
       fetchInvoices();
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Failed to post invoice');
     }
   };
 
@@ -189,31 +203,21 @@ export default function InvoicingDashboardPage() {
       setSubmittingPayment(true);
       setPaymentError(null);
 
-      const res = await fetch(`${API_URL}/api/invoices/${selectedInvoiceForPayment.id}/payments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: amountNum,
-          paymentMethod: paymentMethod,
-          transactionReference: transactionRef.trim() || `PAY-${Date.now()}`
-        })
+      const res = await apiClient.post(`/invoices/${selectedInvoiceForPayment.id}/payments`, {
+        amount: amountNum,
+        paymentMethod: paymentMethod,
+        transactionReference: transactionRef.trim() || `PAY-${Date.now()}`
       });
-
-      const json = await res.json();
-
-      if (!res.ok) {
-        throw new Error(json.error?.message || 'Failed to record payment');
-      }
 
       setNotification({
         type: 'success',
-        message: json.message || `Payment of ${formatCurrency(amountNum)} recorded successfully!`
+        message: res?.message || `Payment of ${formatCurrency(amountNum)} recorded successfully!`
       });
 
       closePaymentModal();
       fetchInvoices();
     } catch (err) {
-      setPaymentError(err.message);
+      setPaymentError(err.message || 'Failed to record payment');
     } finally {
       setSubmittingPayment(false);
     }
@@ -225,16 +229,10 @@ export default function InvoicingDashboardPage() {
   const handleViewInvoiceDetail = async (invoiceId) => {
     try {
       setLoadingDetail(true);
-      const res = await fetch(`${API_URL}/api/invoices/${invoiceId}`);
-      const json = await res.json();
-
-      if (!res.ok) {
-        throw new Error(json.error?.message || 'Failed to load invoice details');
-      }
-
-      setSelectedInvoiceDetail(json.data);
+      const data = await apiClient.get(`/invoices/${invoiceId}`);
+      setSelectedInvoiceDetail(data);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Failed to load invoice details');
     } finally {
       setLoadingDetail(false);
     }
@@ -322,6 +320,9 @@ export default function InvoicingDashboardPage() {
           <div className="flex items-center justify-between h-16">
             {/* Logo & Navigation Title */}
             <div className="flex items-center space-x-4">
+              <Link href="/" className="text-white/80 hover:text-white text-xs">
+                ← Workspace
+              </Link>
               <div className="w-8 h-8 rounded bg-white/20 flex items-center justify-center font-bold text-lg text-white">
                 D
               </div>
@@ -331,11 +332,20 @@ export default function InvoicingDashboardPage() {
               </div>
             </div>
 
-            {/* Navigation Badges */}
+            {/* Navigation Links & Badges */}
             <div className="flex items-center space-x-3">
-              <span className="px-2.5 py-1 text-xs font-semibold rounded bg-white/10 text-purple-100 border border-white/15">
-                Track 4: §9 Step 8
-              </span>
+              <Link
+                href="/orders"
+                className="px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white rounded transition"
+              >
+                Orders & Fulfillment
+              </Link>
+              <Link
+                href="/quotations"
+                className="px-3 py-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white rounded transition"
+              >
+                Quotations
+              </Link>
               <button
                 onClick={fetchInvoices}
                 className="px-3 py-1.5 text-xs font-medium bg-white text-[#714B67] rounded hover:bg-purple-50 transition shadow-sm"
@@ -460,6 +470,42 @@ export default function InvoicingDashboardPage() {
         </div>
 
         {/* ================================================================== */}
+        {/* Confirmed Orders Awaiting Invoices */}
+        {/* ================================================================== */}
+        {ordersAwaitingInvoice.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-5 shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                <h2 className="text-sm font-bold text-amber-900">
+                  {ordersAwaitingInvoice.length} Confirmed Deal(s) Awaiting Invoicing
+                </h2>
+              </div>
+              <span className="text-xs text-amber-700">Orders confirmed without invoices generated</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {ordersAwaitingInvoice.map((order) => (
+                <div key={order.id} className="bg-white p-3.5 rounded border border-amber-200 flex items-center justify-between">
+                  <div>
+                    <Link href={`/orders/${order.id}`} className="text-xs font-bold text-[#714B67] hover:underline">
+                      {order.orderNumber}
+                    </Link>
+                    <div className="text-[11px] text-gray-600">{order.customer?.name}</div>
+                    <div className="text-xs font-semibold text-gray-900 mt-1">{formatCurrency(order.totalAmount)}</div>
+                  </div>
+                  <button
+                    onClick={() => handleGenerateInvoicesForOrder(order.id, order.orderNumber)}
+                    className="px-3 py-1.5 text-xs font-medium bg-[#714B67] text-white rounded hover:bg-[#593b51] transition shadow-xs"
+                  >
+                    Generate Invoices
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ================================================================== */}
         {/* Table Controls & Filter Toolbar */}
         {/* ================================================================== */}
         <div className="bg-white rounded-lg p-4 border border-gray-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
@@ -470,7 +516,7 @@ export default function InvoicingDashboardPage() {
               placeholder="Search by Invoice #, Order, Customer..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#714B67] focus:border-[#714B67]"
+              className="w-full pl-9 pr-4 py-2 bg-white text-[#212529] border border-[#CED4DA] rounded-md text-sm placeholder:text-[#868E96] focus:outline-none focus:ring-1 focus:ring-[#714B67] focus:border-[#714B67]"
             />
             <svg
               className="w-4 h-4 text-gray-400 absolute left-3 top-3"
@@ -490,7 +536,7 @@ export default function InvoicingDashboardPage() {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="text-xs border border-gray-300 rounded-md px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#714B67]"
+                className="text-xs border border-[#CED4DA] rounded-md px-2.5 py-1.5 bg-white text-[#212529] focus:outline-none focus:ring-1 focus:ring-[#714B67]"
               >
                 <option value="ALL">All Statuses</option>
                 <option value="DRAFT">Draft</option>
@@ -506,7 +552,7 @@ export default function InvoicingDashboardPage() {
               <select
                 value={typeFilter}
                 onChange={(e) => setTypeFilter(e.target.value)}
-                className="text-xs border border-gray-300 rounded-md px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#714B67]"
+                className="text-xs border border-[#CED4DA] rounded-md px-2.5 py-1.5 bg-white text-[#212529] focus:outline-none focus:ring-1 focus:ring-[#714B67]"
               >
                 <option value="ALL">All Types</option>
                 <option value="ONE_TIME">One-Time Sale</option>
@@ -721,7 +767,7 @@ export default function InvoicingDashboardPage() {
                     required
                     value={paymentAmount}
                     onChange={(e) => setPaymentAmount(e.target.value)}
-                    className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-md text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#714B67]"
+                    className="w-full pl-8 pr-4 py-2 bg-white text-[#212529] border border-[#CED4DA] rounded-md text-sm font-medium placeholder:text-[#868E96] focus:outline-none focus:ring-2 focus:ring-[#714B67]"
                     placeholder="Enter amount"
                   />
                 </div>
@@ -755,7 +801,7 @@ export default function InvoicingDashboardPage() {
                 <select
                   value={paymentMethod}
                   onChange={(e) => setPaymentMethod(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#714B67]"
+                  className="w-full px-3 py-2 border border-[#CED4DA] rounded-md text-sm bg-white text-[#212529] focus:outline-none focus:ring-2 focus:ring-[#714B67]"
                 >
                   <option value="BANK_TRANSFER">Bank Wire Transfer (NEFT / RTGS / IMPS)</option>
                   <option value="CARD">Corporate Credit / Debit Card</option>
@@ -774,7 +820,7 @@ export default function InvoicingDashboardPage() {
                   value={transactionRef}
                   onChange={(e) => setTransactionRef(e.target.value)}
                   placeholder="e.g. UTR-AXIS-992019"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#714B67]"
+                  className="w-full px-3 py-2 border border-[#CED4DA] rounded-md text-sm font-mono bg-white text-[#212529] placeholder:text-[#868E96] focus:outline-none focus:ring-2 focus:ring-[#714B67]"
                 />
               </div>
 

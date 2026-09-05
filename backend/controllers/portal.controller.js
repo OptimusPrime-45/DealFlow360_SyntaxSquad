@@ -3,6 +3,9 @@ import prisma from '../lib/prisma.js';
 import { ApiError } from '../utils/api-error.js';
 import { ApiResponse } from '../utils/api-response.js';
 import { asyncHandler } from '../utils/async-handler.js';
+import { confirmQuotationToOrder } from './orders.controller.js';
+import { generateInvoicesForOrder } from './invoicing.controller.js';
+import { recordAuditLog } from '../lib/audit.js';
 
 /**
  * Customer Portal Controller
@@ -20,11 +23,15 @@ export const generatePortalLink = asyncHandler(async (req, res) => {
   // 1. Verify that the quotation exists in the database
   const quotation = await prisma.quotation.findUnique({
     where: { id: quotationId },
-    select: { id: true, customerId: true, quotationNumber: true }
+    select: { id: true, customerId: true, quotationNumber: true, salesRepId: true }
   });
 
   if (!quotation) {
     throw new ApiError(404, `Quotation with ID "${quotationId}" was not found`);
+  }
+
+  if (req.user?.role?.code === "SALES_REP" && quotation.salesRepId !== req.user.id) {
+    throw new ApiError(403, "Forbidden: You can only generate portal links for your own quotations");
   }
 
   const portalSecret = process.env.PORTAL_JWT_SECRET;
@@ -265,5 +272,120 @@ export const revokeToken = asyncHandler(async (req, res) => {
 
   return res.status(200).json(
     new ApiResponse(200, { revoked: true }, 'Portal access link revoked')
+  );
+});
+
+/**
+ * POST /api/portal/accept
+ * Customer Endpoint: Formally accepts the quotation from the customer portal.
+ * Transitions quotation to CONFIRMED, records customer acceptance, closes active negotiation,
+ * automatically generates Order and initial Invoices, and records audit trail.
+ */
+export const acceptProposal = asyncHandler(async (req, res) => {
+  const { quotationId } = req.portalSession;
+
+  // 1. Fetch quotation
+  const quotation = await prisma.quotation.findUnique({
+    where: { id: quotationId },
+    include: {
+      customer: true,
+      lines: true,
+      order: true,
+    },
+  });
+
+  if (!quotation) {
+    throw new ApiError(404, 'Quotation not found');
+  }
+
+  // Quotation can be accepted from APPROVED, SENT, or UNDER_NEGOTIATION
+  const ACCEPTABLE_STATUSES = ['APPROVED', 'SENT', 'UNDER_NEGOTIATION'];
+  if (!ACCEPTABLE_STATUSES.includes(quotation.status)) {
+    if (quotation.status === 'CONFIRMED') {
+      return res.status(200).json(
+        new ApiResponse(
+          200,
+          { quotationId, status: 'CONFIRMED', orderId: quotation.order?.id },
+          'This proposal has already been confirmed and processed into an order.'
+        )
+      );
+    }
+    throw new ApiError(
+      400,
+      `Quotation cannot be accepted from current status: ${quotation.status}`
+    );
+  }
+
+  // 2. Close any open negotiation session
+  await prisma.negotiation.updateMany({
+    where: { quotationId, status: 'OPEN' },
+    data: { status: 'CLOSED', closedAt: new Date() },
+  });
+
+  // 3. Confirm quotation and generate order using the shared rule engine
+  let orderResult = null;
+  if (!quotation.order) {
+    try {
+      orderResult = await confirmQuotationToOrder(quotation.id);
+    } catch (err) {
+      console.error('Order creation during customer accept:', err.message);
+    }
+  }
+
+  // 4. Update quotation to CONFIRMED
+  const updatedQuotation = await prisma.quotation.update({
+    where: { id: quotationId },
+    data: {
+      status: 'CONFIRMED',
+      confirmedAt: new Date(),
+      lastActivityAt: new Date(),
+    },
+    include: {
+      order: true,
+    },
+  });
+
+  // 5. Generate invoices for the order if created
+  const activeOrderId = orderResult?.order?.id || updatedQuotation.order?.id;
+  let generatedInvoices = [];
+  if (activeOrderId) {
+    try {
+      generatedInvoices = await generateInvoicesForOrder(activeOrderId);
+    } catch (err) {
+      console.error('Invoice generation during customer accept:', err.message);
+    }
+  }
+
+  // 6. Record Audit Log
+  await recordAuditLog({
+    userId: null,
+    quotationId,
+    actorType: 'CUSTOMER',
+    entityType: 'Quotation',
+    entityId: quotationId,
+    action: 'CUSTOMER_ACCEPTED_PROPOSAL',
+    newValue: {
+      status: 'CONFIRMED',
+      orderId: activeOrderId,
+      invoiceCount: generatedInvoices.length,
+    },
+    reason: 'Customer formally accepted the commercial proposal via customer portal',
+  });
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        quotationId: updatedQuotation.id,
+        quotationNumber: updatedQuotation.quotationNumber,
+        status: 'CONFIRMED',
+        confirmedAt: updatedQuotation.confirmedAt,
+        orderId: activeOrderId,
+        orderNumber: orderResult?.order?.orderNumber || updatedQuotation.order?.orderNumber,
+        order: orderResult?.order || updatedQuotation.order,
+        invoicesGenerated: generatedInvoices.length,
+      },
+      'Commercial proposal accepted successfully! Order confirmed and invoice generated.'
+    )
   );
 });

@@ -27,6 +27,11 @@ export default function PlansPage() {
           </Button>
         </Link>
       </AdminHeader>
+        section="Catalogue"
+        title="Subscription Plans"
+        description="Recurring plans attached to subscription products. A quotation line using a plan generates its own billing schedule, billed separately from one-time lines on the same order."
+      />
+      <Banners error={plans.error} notice={plans.notice} />
 
       <div className="bg-[#EBF5FB] border border-[#2980B9]/30 rounded-[8px] p-4 mb-6 text-sm text-[#1B4F72] flex items-center justify-between">
         <div>

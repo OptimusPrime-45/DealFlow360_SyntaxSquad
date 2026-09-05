@@ -180,7 +180,7 @@ export default function OrderDetailPage() {
                         value={payAmount[inv.id] ?? ""}
                         placeholder={outstanding.toFixed(2)}
                         onChange={(e) => setPayAmount((p) => ({ ...p, [inv.id]: e.target.value }))}
-                        className="w-28 px-2 py-1 text-sm border border-[#DEE2E6] rounded-[4px]"
+                        className="w-28 px-2 py-1 text-sm bg-white text-[#212529] border border-[#CED4DA] rounded-[4px] focus:border-[#714B67] focus:outline-none placeholder:text-[#868E96]"
                       />
                       <Button
                         variant="primary" size="sm" className="text-xs" disabled={busy}
@@ -210,7 +210,9 @@ export default function OrderDetailPage() {
     <div className="min-h-screen bg-[#F8F9FA]">
       <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-10">
         <div className="flex items-center gap-4">
-          <Link href="/quotations" className="text-sm text-[#6C757D] hover:text-[#714B67]">← Pipeline</Link>
+          <Link href="/orders" className="text-sm text-[#6C757D] hover:text-[#714B67]">← Orders</Link>
+          <span className="text-[#CED4DA]">|</span>
+          <Link href="/quotations" className="text-sm text-[#6C757D] hover:text-[#714B67]">Pipeline</Link>
           <div>
             <div className="font-bold text-base text-[#212529]">
               {saved?.orderNumber || "Order Fulfillment & Billing"}
@@ -245,11 +247,18 @@ export default function OrderDetailPage() {
               apiClient.post(`/subscriptions/orders/${id}/create`, {}))}>
             Generate Schedules
           </Button>
-          <Button variant="primary" size="sm" className="text-xs" disabled={busy}
+          <Button variant="secondary" size="sm" className="text-xs" disabled={busy}
             onClick={() => run("Invoices generated", () =>
               apiClient.post(`/invoices/generate/${id}`, {}))}>
             Generate Invoices
           </Button>
+          {orderStatus !== "COMPLETED" && (
+            <Button variant="primary" size="sm" className="text-xs" disabled={busy}
+              onClick={() => run("Deal completed and order closed", () =>
+                apiClient.post(`/orders/${id}/close`, {}))}>
+              Close Deal
+            </Button>
+          )}
         </div>
       </header>
 

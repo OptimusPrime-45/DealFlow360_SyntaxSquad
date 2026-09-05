@@ -20,6 +20,7 @@ router.post('/login', portalAuth.portalLogin);
 // ============================================================================
 // Scoped to req.portalSession.quotationId to prevent cross-tenant access
 router.get('/quote', requirePortal, portalController.getPortalQuote);
+router.post('/accept', requirePortal, portalController.acceptProposal);
 
 // Who this session belongs to, and every quotation the customer owns.
 // listPortalQuotations refuses magic-link sessions: a link is scoped to the one

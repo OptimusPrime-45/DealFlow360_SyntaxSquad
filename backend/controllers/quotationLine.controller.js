@@ -38,14 +38,18 @@ const updateLineSchema = z.object({
 });
 
 /** Load a quotation and assert it can still be edited. */
-const loadEditableQuotation = async (quotationId) => {
+const loadEditableQuotation = async (quotationId, reqUser = null) => {
   const quotation = await prisma.quotation.findUnique({
     where: { id: quotationId },
-    select: { id: true, status: true, quotationNumber: true },
+    select: { id: true, status: true, quotationNumber: true, salesRepId: true },
   });
 
   if (!quotation) {
     throw new ApiError(404, "Quotation not found");
+  }
+
+  if (reqUser?.role?.code === "SALES_REP" && quotation.salesRepId !== reqUser.id) {
+    throw new ApiError(403, "Forbidden: You can only edit your own quotations");
   }
 
   if (!EDITABLE_STATUSES.includes(quotation.status)) {
@@ -66,7 +70,7 @@ export const addQuotationLine = asyncHandler(async (req, res) => {
   const { id: quotationId } = req.params;
   const input = addLineSchema.parse(req.body);
 
-  await loadEditableQuotation(quotationId);
+  await loadEditableQuotation(quotationId, req.user);
 
   const product = await prisma.product.findUnique({
     where: { id: input.productId },
@@ -130,7 +134,7 @@ export const updateQuotationLine = asyncHandler(async (req, res) => {
   const { id: quotationId, lineId } = req.params;
   const input = updateLineSchema.parse(req.body);
 
-  await loadEditableQuotation(quotationId);
+  await loadEditableQuotation(quotationId, req.user);
 
   const line = await prisma.quotationLine.findFirst({
     where: { id: lineId, quotationId },
@@ -169,7 +173,7 @@ export const updateQuotationLine = asyncHandler(async (req, res) => {
 export const deleteQuotationLine = asyncHandler(async (req, res) => {
   const { id: quotationId, lineId } = req.params;
 
-  await loadEditableQuotation(quotationId);
+  await loadEditableQuotation(quotationId, req.user);
 
   const line = await prisma.quotationLine.findFirst({
     where: { id: lineId, quotationId },
@@ -219,15 +223,31 @@ export const getUpsellSuggestions = asyncHandler(async (req, res) => {
 
   const quotation = await prisma.quotation.findUnique({
     where: { id: quotationId },
-    include: { lines: { select: { productId: true } } },
+    include: {
+      lines: {
+        include: {
+          product: {
+            include: { category: true },
+          },
+        },
+      },
+    },
   });
 
   if (!quotation) {
     throw new ApiError(404, "Quotation not found");
   }
 
-  const presentProductIds = quotation.lines.map((l) => l.productId);
+  if (req.user?.role?.code === "SALES_REP" && quotation.salesRepId !== req.user.id) {
+    throw new ApiError(403, "Forbidden: You can only view suggestions for your own quotations");
+  }
 
+  const presentProductIds = quotation.lines.map((l) => l.productId);
+  const presentCategoryIds = quotation.lines
+    .map((l) => l.product?.categoryId)
+    .filter(Boolean);
+
+  // 1. First Priority: explicit co-purchase rules from existing products
   const rules = await prisma.coPurchaseRule.findMany({
     where: { isActive: true, sourceProductId: { in: presentProductIds } },
     include: { suggestedProduct: { include: { category: true } } },
@@ -272,13 +292,80 @@ export const getUpsellSuggestions = asyncHandler(async (req, res) => {
       marginDelta: round2(price - cost),
       revenueDelta: price,
       isPromoted: product.isPromoted,
-      promotionTag: product.isPromoted ? "Promoted" : null,
+      promotionTag: product.isPromoted ? "Promoted" : "Frequently Bought Together",
       coPurchaseCount: rule.coPurchaseCount,
       score,
+      source: "CO_PURCHASE_RULE",
     });
   }
 
-  const suggestions = [...best.values()].sort((a, b) => b.score - a.score);
+  // 2. Intelligent Dynamic Upsell Engine:
+  // If rules produced fewer than 4 suggestions, query the catalog for complementary / high-margin items!
+  if (best.size < 4) {
+    const candidateProducts = await prisma.product.findMany({
+      where: {
+        isActive: true,
+        id: { notIn: presentProductIds },
+      },
+      include: { category: true },
+    });
+
+    for (const product of candidateProducts) {
+      if (best.has(product.id)) continue;
+
+      const price = toNum(product.basePrice);
+      const cost = toNum(product.costPrice);
+      const marginPercent = price > 0 ? round2(((price - cost) / price) * 100) : 0;
+
+      // Filter out products with margin below 10% (protect deal profitability)
+      if (marginPercent < 10) continue;
+
+      // Check if product is complementary (different category or subscription attached to hardware)
+      const isComplementary =
+        product.productType === "SUBSCRIPTION" ||
+        (product.categoryId && !presentCategoryIds.includes(product.categoryId));
+
+      // Scoring heuristic:
+      // Base: Margin contribution (higher margin gives higher rank)
+      // + Boost for Promoted (+35)
+      // + Boost for Complementary category/service (+25)
+      // + Boost for Subscription (+15)
+      const score = round2(
+        (marginPercent * 0.6) +
+        (product.isPromoted ? 35 : 0) +
+        (isComplementary ? 25 : 0) +
+        (product.productType === "SUBSCRIPTION" ? 15 : 0)
+      );
+
+      const tag = product.isPromoted
+        ? "Promoted"
+        : product.productType === "SUBSCRIPTION"
+        ? "Service Add-on"
+        : isComplementary
+        ? "Complementary"
+        : "High Margin";
+
+      best.set(product.id, {
+        productId: product.id,
+        sku: product.sku,
+        name: product.name,
+        category: product.category?.name || null,
+        unitPrice: price,
+        marginPercent,
+        marginDelta: round2(price - cost),
+        revenueDelta: price,
+        isPromoted: product.isPromoted,
+        promotionTag: tag,
+        coPurchaseCount: 0,
+        score,
+        source: "DYNAMIC_CATALOG_ENGINE",
+      });
+    }
+  }
+
+  const suggestions = [...best.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6);
 
   return res
     .status(200)

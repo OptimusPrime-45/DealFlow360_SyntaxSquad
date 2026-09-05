@@ -65,22 +65,35 @@ export default function AdminLayout({ children }) {
   const isAdmin = user.role === "ADMIN" || user.role?.code === "ADMIN";
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] flex flex-col">
-      <header className="h-16 bg-[#714B67] text-white px-6 flex items-center justify-between sticky top-0 z-20">
+    <div className="min-h-screen bg-[#F8F9FA] flex flex-col font-sans">
+      {/* Top Header per DESIGN.md §17 & §18: White background, dark text, clean borders */}
+      <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-20">
         <div className="flex items-center gap-4">
-          <Link href="/" className="text-sm text-white/80 hover:text-white">← Workspace</Link>
-          <div>
-            <div className="font-bold text-base">Backend Configuration</div>
-            <div className="text-[11px] text-white/70">
-              Rules the deal engine reads at runtime
+          <Link href="/" className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-[6px] bg-[#714B67] text-white flex items-center justify-center font-bold text-xs">
+              DF
             </div>
-          </div>
+            <span className="font-bold text-base text-[#212529]">
+              DealFlow360
+            </span>
+          </Link>
+          <span className="text-[#CED4DA]">/</span>
+          <span className="text-sm font-semibold text-[#714B67]">
+            Backend Configuration
+          </span>
         </div>
+
         <div className="flex items-center gap-3">
-          <span className="text-xs text-white/80">{user.fullName}</span>
+          <div className="text-right hidden sm:block">
+            <div className="text-xs font-semibold text-[#212529]">{user.fullName}</div>
+            <div className="text-[10px] text-[#6C757D]">{user.email}</div>
+          </div>
           <Badge variant={isAdmin ? "success" : "warning"} size="sm">
             {user.roleName || user.role?.name || user.role}
           </Badge>
+          <Link href="/" className="text-xs font-medium text-[#6C757D] hover:text-[#714B67] transition-colors ml-2">
+            ← Workspace
+          </Link>
         </div>
       </header>
 
@@ -92,32 +105,28 @@ export default function AdminLayout({ children }) {
       )}
 
       <div className="flex-1 flex">
-        {/* Sidebar */}
+        {/* Sidebar per DESIGN.md §19 & §20 */}
         <nav className="w-60 shrink-0 bg-white border-r border-[#E9ECEF] p-4">
           {SECTIONS.map((section) => (
-            <div key={section.group} className="mb-5">
-              <div className="text-[10px] uppercase tracking-wider text-[#ADB5BD] font-semibold px-2 mb-2">
+            <div key={section.group} className="mb-6">
+              <div className="text-[11px] uppercase tracking-wider text-[#868E96] font-semibold px-3 mb-2">
                 {section.group}
               </div>
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 {section.items.map((item) => {
                   const active = pathname === item.href;
                   return (
                     <Link
                       key={item.href}
                       href={item.href}
-                      className={`block px-2 py-2 rounded-[6px] transition ${
-                        active ? "bg-[#F3EEF2] border-l-2 border-l-[#714B67]" : "hover:bg-[#F8F9FA]"
+                      className={`block px-3 py-2 rounded-[6px] transition-colors ${
+                        active
+                          ? "bg-[#F3EEF2] text-[#714B67] font-semibold border-l-[3px] border-[#714B67]"
+                          : "text-[#495057] hover:bg-[#F8F9FA] hover:text-[#212529]"
                       }`}
                     >
-                      <div
-                        className={`text-sm ${
-                          active ? "font-semibold text-[#714B67]" : "text-[#212529]"
-                        }`}
-                      >
-                        {item.label}
-                      </div>
-                      <div className="text-[10px] text-[#6C757D]">{item.hint}</div>
+                      <div className="text-sm">{item.label}</div>
+                      <div className="text-[11px] text-[#6C757D] mt-0.5">{item.hint}</div>
                     </Link>
                   );
                 })}
@@ -126,7 +135,7 @@ export default function AdminLayout({ children }) {
           ))}
         </nav>
 
-        <main className="flex-1 p-6 max-w-6xl">{children}</main>
+        <main className="flex-1 p-6 md:p-8 max-w-7xl">{children}</main>
       </div>
     </div>
   );

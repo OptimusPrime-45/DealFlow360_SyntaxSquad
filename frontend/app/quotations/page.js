@@ -12,9 +12,13 @@ export default function QuotationsPage() {
   const { user, isAuthenticated, loading: authLoading } = useAuth();
 
   const [quotations, setQuotations] = useState([]);
+  const [salesReps, setSalesReps] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("");
+  const [repFilter, setRepFilter] = useState("");
   const [error, setError] = useState("");
+
+  const isManagerOrAdmin = user?.role === "SALES_MANAGER" || user?.role === "ADMIN" || user?.role === "FINANCE";
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -26,11 +30,27 @@ export default function QuotationsPage() {
     setLoading(true);
     setError("");
     try {
-      const endpoint = statusFilter
-        ? `/quotations?status=${statusFilter}`
-        : "/quotations";
-      const res = await apiClient.get(endpoint);
-      setQuotations(res.quotations || []);
+      const params = new URLSearchParams();
+      if (statusFilter) params.append("status", statusFilter);
+      if (repFilter) params.append("salesRepId", repFilter);
+      const queryStr = params.toString() ? `?${params.toString()}` : "";
+
+      const res = await apiClient.get(`/quotations${queryStr}`);
+      const data = res.quotations || [];
+      setQuotations(data);
+
+      // Collect available sales reps for the manager dropdown
+      if (isManagerOrAdmin) {
+        setSalesReps((prev) => {
+          const repMap = new Map(prev.map((r) => [r.id, r]));
+          data.forEach((q) => {
+            if (q.salesRep?.id) {
+              repMap.set(q.salesRep.id, q.salesRep);
+            }
+          });
+          return Array.from(repMap.values());
+        });
+      }
     } catch (err) {
       setError(err.message || "Failed to load quotations");
     } finally {
@@ -42,12 +62,14 @@ export default function QuotationsPage() {
     if (isAuthenticated) {
       fetchQuotations();
     }
-  }, [isAuthenticated, statusFilter]);
+  }, [isAuthenticated, statusFilter, repFilter]);
 
   const statusColors = {
     DRAFT: "gray",
     PENDING_APPROVAL: "warning",
     APPROVED: "success",
+    SENT: "info",
+    UNDER_NEGOTIATION: "warning",
     REJECTED: "danger",
     CONFIRMED: "neutral",
   };
@@ -78,6 +100,9 @@ export default function QuotationsPage() {
         </div>
 
         <div className="flex items-center gap-3">
+          <span className="text-xs px-2.5 py-1 rounded bg-[#F3EEF2] text-[#714B67] font-semibold border border-[#714B67]/20">
+            {user?.role || "User"}
+          </span>
           <Link href="/quotations/new">
             <Button variant="primary" size="sm" className="font-semibold">
               + New Quotation
@@ -95,27 +120,55 @@ export default function QuotationsPage() {
               Quotations Pipeline
             </h1>
             <p className="text-xs text-[#6C757D] mt-0.5">
-              Review multi-line quotations, discount discipline, and margin status
+              {user?.role === "SALES_REP"
+                ? "Your authored quotations, live discount discipline, and margin health"
+                : "All team quotations across sales reps, policy compliance, and approval status"}
             </p>
           </div>
 
           {/* Filter Bar */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
-              Status:
-            </span>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-9 px-3 text-xs bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] outline-none focus:border-[#714B67] transition-all cursor-pointer"
-            >
-              <option value="">All Statuses</option>
-              <option value="DRAFT">Draft</option>
-              <option value="PENDING_APPROVAL">Pending Approval</option>
-              <option value="APPROVED">Approved</option>
-              <option value="REJECTED">Rejected</option>
-              <option value="CONFIRMED">Confirmed</option>
-            </select>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Sales Rep Filter (Visible to Managers & Admins) */}
+            {isManagerOrAdmin && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
+                  Rep:
+                </span>
+                <select
+                  value={repFilter}
+                  onChange={(e) => setRepFilter(e.target.value)}
+                  className="h-9 px-3 text-xs bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] outline-none focus:border-[#714B67] transition-all cursor-pointer"
+                >
+                  <option value="">All Sales Reps</option>
+                  {salesReps.map((rep) => (
+                    <option key={rep.id} value={rep.id}>
+                      {rep.fullName || rep.email}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
+                Status:
+              </span>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="h-9 px-3 text-xs bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] outline-none focus:border-[#714B67] transition-all cursor-pointer"
+              >
+                <option value="">All Statuses</option>
+                <option value="DRAFT">Draft</option>
+                <option value="PENDING_APPROVAL">Pending Approval</option>
+                <option value="APPROVED">Approved</option>
+                <option value="SENT">Sent to Customer</option>
+                <option value="UNDER_NEGOTIATION">Under Negotiation</option>
+                <option value="CONFIRMED">Confirmed</option>
+                <option value="REJECTED">Rejected</option>
+              </select>
+            </div>
+
             <Button
               variant="secondary"
               size="sm"
@@ -148,7 +201,9 @@ export default function QuotationsPage() {
               No quotations found
             </h3>
             <p className="text-xs text-[#6C757D] max-w-sm mx-auto mt-1 mb-4">
-              Get started by drafting your first multi-line quotation with live ceiling and margin validation.
+              {user?.role === "SALES_REP"
+                ? "You have not authored any quotations matching these filters."
+                : "No quotations matching the selected filter criteria."}
             </p>
             <Link href="/quotations/new">
               <Button variant="primary" size="sm">
@@ -161,6 +216,7 @@ export default function QuotationsPage() {
             headers={[
               "Quote Number",
               "Customer",
+              "Sales Rep",
               "Customer Tier",
               "Status",
               "Lines",
@@ -185,6 +241,14 @@ export default function QuotationsPage() {
                   </div>
                   <div className="text-[11px] text-[#6C757D]">
                     {q.customer?.contactEmail}
+                  </div>
+                </td>
+                <td className="py-3 px-4">
+                  <div className="font-medium text-xs text-[#212529]">
+                    {q.salesRep?.fullName || "Unassigned"}
+                  </div>
+                  <div className="text-[11px] text-[#6C757D]">
+                    {q.salesRep?.email}
                   </div>
                 </td>
                 <td className="py-3 px-4">

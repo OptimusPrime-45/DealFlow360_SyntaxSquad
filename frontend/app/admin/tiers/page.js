@@ -51,6 +51,7 @@ export default function TiersPage() {
   return (
     <>
       <AdminHeader
+        section="Governance"
         title="Customer Tiers"
         description="The tier ceiling is the baseline discretion a customer's tier allows. Category rules can only make it stricter, never looser."
       />
@@ -115,7 +116,7 @@ export default function TiersPage() {
                   placeholder="new %"
                   value={editing[t.id] ?? ""}
                   onChange={(e) => setEditing((s) => ({ ...s, [t.id]: e.target.value }))}
-                  className="w-24 px-2 py-1 text-sm border border-[#DEE2E6] rounded-[4px]"
+                  className="w-24 h-9 px-2.5 text-xs bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] outline-none focus:border-[#714B67] focus:ring-2 focus:ring-[#F3EEF2] placeholder:text-[#868E96] transition-all"
                 />
                 <Button
                   variant="secondary" size="sm" className="text-xs"
