@@ -7,6 +7,11 @@ import authRoutes from "./routes/auth.routes.js";
 import ordersRoutes from "./routes/orders.routes.js";
 import fulfillmentRoutes from "./routes/fulfillment.routes.js";
 import subscriptionsRoutes from "./routes/subscriptions.routes.js";
+import authRouter from "./routes/auth.routes.js";
+import governanceRouter from "./routes/governance.routes.js";
+import approvalRouter from "./routes/approval.routes.js";
+import auditRouter from "./routes/audit.routes.js";
+import { errorHandler } from "./middleware/error.middleware.js";
 
 const app = express();
 
@@ -60,6 +65,11 @@ app.use(
     });
   }
 );
+// Routes
+app.use("/api/auth", authRouter);
+app.use("/api/governance", governanceRouter);
+app.use("/api/approvals", approvalRouter);
+app.use("/api/audit-logs", auditRouter);
 
 // Global error handler.
 app.use(
