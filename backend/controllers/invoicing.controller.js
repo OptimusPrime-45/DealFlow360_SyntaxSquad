@@ -17,7 +17,7 @@ import { asyncHandler } from '../utils/async-handler.js';
  * @returns {Promise<Array>} List of generated Invoice records
  */
 export const generateInvoicesForOrder = async (orderId) => {
-  // 1. Fetch the confirmed order with lines and subscriptions
+  // 1. Fetch the confirmed order with lines, allocations, and subscriptions
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
@@ -26,6 +26,11 @@ export const generateInvoicesForOrder = async (orderId) => {
         include: {
           product: true,
           subscriptionPlan: true
+        }
+      },
+      allocations: {
+        include: {
+          warehouse: true
         }
       },
       subscriptions: {
@@ -73,14 +78,38 @@ export const generateInvoicesForOrder = async (orderId) => {
         totalAmount: totalAmount,
         amountPaid: 0,
         lines: {
-          create: oneTimeLines.map((line) => ({
-            orderLineId: line.id,
-            description: `${line.product.name} (Qty: ${line.quantity})`,
-            quantity: line.quantity,
-            unitPrice: line.unitPrice,
-            taxAmount: Number(line.lineTotal) * 0.18,
-            lineTotal: line.lineTotal
-          }))
+          create: oneTimeLines.map((line) => {
+            const lineAllocs = (order.allocations || []).filter(
+              (a) => a.orderLineId === line.id && a.warehouseId && a.allocatedQty > 0
+            );
+            const backorderAlloc = (order.allocations || []).find(
+              (a) => a.orderLineId === line.id && a.backorderQty > 0
+            );
+
+            let provenanceStr = "";
+            if (lineAllocs.length > 0) {
+              const whList = lineAllocs
+                .map((a) => `${a.warehouse?.name || a.warehouse?.code} (${a.allocatedQty} units)`)
+                .join(", ");
+              provenanceStr = ` — Fulfilled from: ${whList}`;
+            }
+            if (backorderAlloc) {
+              provenanceStr += ` | [Backordered: ${backorderAlloc.backorderQty} units]`;
+            }
+
+            const discountNote =
+              Number(line.discountPercent) > 0 ? ` (Disc: ${line.discountPercent}%)` : "";
+            const description = `${line.product.name} [SKU: ${line.product.sku}]${provenanceStr}${discountNote}`;
+
+            return {
+              orderLineId: line.id,
+              description,
+              quantity: line.quantity,
+              unitPrice: line.unitPrice,
+              taxAmount: Number(line.lineTotal) * 0.18,
+              lineTotal: line.lineTotal,
+            };
+          })
         }
       },
       include: {

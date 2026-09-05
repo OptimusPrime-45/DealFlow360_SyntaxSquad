@@ -438,6 +438,37 @@ export default function OrdersListPage() {
             );
           }}
         />
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Link href={`/orders/${order.id}`}>
+                          <Button
+                            variant={order.status === "PENDING_FULFILLMENT" || order.status === "BACKORDERED" ? "primary" : "secondary"}
+                            size="sm"
+                            className="text-xs"
+                          >
+                            📦 Fulfillment &amp; Split
+                          </Button>
+                        </Link>
+                        {order.status !== "COMPLETED" && (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            className="text-xs"
+                            disabled={busy}
+                            onClick={() => handleCloseDeal(order.id, order.orderNumber)}
+                          >
+                            Close Deal
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </Table>
+          )}
+        </Card>
       </main>
     </div>
   );
