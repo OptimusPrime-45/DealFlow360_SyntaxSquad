@@ -8,14 +8,19 @@ const PORT = process.env.PORT || 4000;
 
 const startServer = async () => {
   try {
-    await prisma.$connect();
-    console.log("✔ PostgreSQL connected via Prisma");
-
     app.listen(PORT, () => {
-      console.log(`✔ DealFlow360 API server running on port ${PORT}`);
+      process.stdout.write(`✔ DealFlow360 backend running on port ${PORT}\n`);
     });
+
+    prisma.$connect()
+      .then(() => {
+        process.stdout.write("✔ PostgreSQL connected via Prisma\n");
+      })
+      .catch((err) => {
+        process.stdout.write(`⚠ DB Connection warning (Ensure Postgres is running): ${err.message}\n`);
+      });
   } catch (error) {
-    console.error("Failed to start server:", error);
+    process.stderr.write(`Failed to start server: ${error.message}\n`);
     process.exit(1);
   }
 };
