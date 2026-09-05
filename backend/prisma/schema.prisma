@@ -1,0 +1,1132 @@
+// ============================================================================
+//  DealFlow360 — Prisma schema
+//  See: self-governing-deal-engine.prd.md  (what & why)
+//       self-governing-deal-engine.architecture.md  (how)
+//
+//  THIS FILE IS THE HOUR-0 CONTRACT.
+//  All four tracks depend on it. Agree it together, then FREEZE it.
+//  Any change after the freeze = a two-minute huddle, not a solo migration.
+//
+//  ── Conventions ────────────────────────────────────────────────────────────
+//  * Fields are camelCase in JS (`quotation.blendedScore`), snake_case in the
+//    database (via @map). Tables are snake_case plural (via @@map).
+//  * Money      -> Decimal(14, 2)   Percentages -> Decimal(5, 2)
+//    Scores     -> Decimal(6, 2)    Factors     -> Decimal(6, 4)
+//  * ⚠ Prisma returns Decimal columns as `Prisma.Decimal` OBJECTS.
+//    `a + b` on two of them SILENTLY STRING-CONCATENATES. Always go through
+//    `src/lib/money.js`. See Spike 1 in the architecture doc.
+//  * "Snapshot" fields are copied at write time and NEVER recomputed. They are
+//    what let an old approval still explain itself after config changes.
+//
+//  ── Invariants Prisma cannot express (enforce in the service layer) ────────
+//  1. Exactly ONE ApprovalPolicy has isActive = true.
+//  2. Exactly ONE GovernanceSetting row exists, with id = "singleton".
+//  3. At most one Negotiation per Quotation has status = OPEN.
+//  4. DiscountRule uniqueness: Postgres treats NULLs as distinct, so the
+//     @@unique below will NOT stop two rows with the same (null, categoryId).
+//     The service must check before insert.
+//  5. QuotationLine.subscriptionPlanId must belong to QuotationLine.productId.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+//  ENUMS
+// ============================================================================
+
+enum ProductType {
+  ONE_TIME
+  SERVICE
+  SUBSCRIPTION
+}
+
+enum LineType {
+  ONE_TIME
+  RECURRING
+}
+
+enum BillingInterval {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+/// How overage across the order is combined into one number.
+/// This is CONFIGURATION, not code — it is what makes the "rules live in
+/// data" thesis true about the formula itself, not just the thresholds.
+enum ScoreStrategy {
+  VALUE_WEIGHTED // Σ(overage × lineValue) / Σ lineValue   ← default
+  SUM_OF_POINTS // Σ overage
+  ABSOLUTE_MARGIN // Σ(overage% × lineValue), in currency
+}
+
+/// What happens when no ceiling is configured for a (tier, category) pair.
+/// Decided in the architecture doc: DENY (fail-safe).
+enum UnconfiguredCeilingPolicy {
+  DENY // resolve to 0% — any discount is overage
+  TIER_ONLY // fall back to the customer tier's ceiling
+  PERMISSIVE // no ceiling at all (unsafe; here for comparison)
+}
+
+enum QuotationStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  SENT
+  UNDER_NEGOTIATION
+  CONFIRMED
+  CANCELLED
+  EXPIRED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  RETURNED // sent back to the rep for revision
+  CANCELLED // superseded by a new approval cycle
+}
+
+/// Why an approval cycle started. REP_SUBMIT is §9 step 3;
+/// CUSTOMER_NEGOTIATION is §9 step 7 (the automatic re-entry).
+enum TriggerSource {
+  REP_SUBMIT
+  CUSTOMER_NEGOTIATION
+  CONFIG_CHANGE
+  SYSTEM_REEVALUATION
+}
+
+enum NegotiationStatus {
+  OPEN
+  CLOSED
+}
+
+enum ActorType {
+  USER
+  CUSTOMER
+  SYSTEM
+}
+
+enum RequestType {
+  DISCOUNT
+  QUANTITY
+  QUESTION
+  REMOVE_LINE
+}
+
+enum RequestStatus {
+  OPEN
+  ACCEPTED
+  DECLINED
+  WITHDRAWN
+}
+
+enum OrderStatus {
+  PENDING_FULFILLMENT
+  ALLOCATED
+  PARTIALLY_SHIPPED
+  SHIPPED
+  COMPLETED
+  CANCELLED
+}
+
+enum FulfillmentStatus {
+  PLANNED
+  RESERVED
+  SHIPPED
+  BACKORDERED
+  CANCELLED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+  EXPIRED
+}
+
+enum BillingStatus {
+  SCHEDULED
+  INVOICED
+  SKIPPED
+  CANCELLED
+}
+
+enum InvoiceType {
+  ONE_TIME
+  RECURRING
+}
+
+enum InvoiceStatus {
+  DRAFT
+  POSTED
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  CARD
+  CASH
+  CHEQUE
+  OTHER
+}
+
+enum SignalType {
+  STALLED_DEAL
+  DISCOUNT_ANOMALY
+  DELIVERY_SLIPPAGE
+  MARGIN_FLOOR_BREACH
+  APPROVAL_OVERDUE
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// ============================================================================
+//  IDENTITY & ACCESS                                              [Track 1]
+// ============================================================================
+
+/// Roles are ROWS, not an enum, so an Admin can add a new approval rung
+/// (e.g. "VP Sales") without a migration. ApprovalPolicyStep points here.
+/// Trade-off: role checks need the code loaded — put `role.code` in the JWT.
+model Role {
+  id                     String                  @id @default(cuid())
+  code                   String                  @unique // ADMIN | SALES_REP | SALES_MANAGER | FINANCE
+  name                   String
+  isSystem               Boolean                 @default(false) @map("is_system") // seeded roles cannot be deleted
+  users                  User[]
+  policySteps            ApprovalPolicyStep[]
+  quotationApprovalSteps QuotationApprovalStep[]
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+
+  @@map("roles")
+}
+
+model User {
+  id           String  @id @default(cuid())
+  email        String  @unique
+  passwordHash String  @map("password_hash")
+  fullName     String  @map("full_name")
+  roleId       String  @map("role_id")
+  role         Role    @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  isActive     Boolean @default(true) @map("is_active")
+
+  ownedCustomers     Customer[]              @relation("CustomerOwner")
+  quotations         Quotation[]             @relation("QuotationRep")
+  reviewSteps        QuotationApprovalStep[] @relation("StepReviewer")
+  negotiationReplies NegotiationRequest[]    @relation("NegotiationResponder")
+  recordedPayments   Payment[]               @relation("PaymentRecorder")
+  issuedCreditNotes  CreditNote[]            @relation("CreditNoteIssuer")
+  auditLogs          AuditLog[]              @relation("AuditActor")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([roleId])
+  @@map("users")
+}
+
+/// CHANGED from the input schema: added `maxDiscountPercent`.
+/// PDF §4-A3 bullet 1 is a TIER ceiling ("Bronze 5, Silver 10, Gold 15");
+/// DiscountRule (bullet 2) is the optional per-category override on top.
+/// Without this, every tier × category pair needs its own row or DENY
+/// routes every quotation.
+/// Nullable on purpose: null means "no tier-level discretion", which lets
+/// GovernanceSetting.unconfiguredCeilingPolicy stay meaningful.
+model CustomerTier {
+  id                 String   @id @default(cuid())
+  code               String   @unique // BRONZE | SILVER | GOLD
+  name               String
+  rank               Int      @default(0) // higher = better tier
+  maxDiscountPercent Decimal? @map("max_discount_percent") @db.Decimal(5, 2)
+
+  customers     Customer[]
+  discountRules DiscountRule[]
+  quotations    Quotation[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("customer_tiers")
+}
+
+model Customer {
+  id             String  @id @default(cuid())
+  name           String
+  contactEmail   String  @unique @map("contact_email")
+  phone          String?
+  billingAddress String? @map("billing_address")
+
+  customerTierId String       @map("customer_tier_id")
+  customerTier   CustomerTier @relation(fields: [customerTierId], references: [id], onDelete: Restrict)
+  ownerRepId     String?      @map("owner_rep_id")
+  ownerRep       User?        @relation("CustomerOwner", fields: [ownerRepId], references: [id], onDelete: SetNull)
+
+  isActive      Boolean        @default(true) @map("is_active")
+  quotations    Quotation[]
+  orders        Order[]
+  subscriptions Subscription[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([customerTierId])
+  @@index([ownerRepId])
+  @@map("customers")
+}
+
+/// Magic-link access to ONE quotation. The token string is the URL segment.
+/// Signed separately from internal JWTs (PORTAL_JWT_SECRET) so a portal token
+/// cannot be replayed against an internal route even if middleware is missed.
+model PortalToken {
+  id          String    @id @default(cuid())
+  quotationId String    @map("quotation_id")
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  token       String    @unique
+  expiresAt   DateTime  @map("expires_at")
+  lastUsedAt  DateTime? @map("last_used_at")
+  isRevoked   Boolean   @default(false) @map("is_revoked")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([quotationId])
+  @@map("portal_tokens")
+}
+
+// ============================================================================
+//  GOVERNANCE CONFIG — the thesis lives here                      [Track 2]
+// ============================================================================
+
+/// ADDED (was missing from the input schema).
+/// Exactly one row, id = "singleton". Without this table the scoring formula
+/// and the unconfigured-ceiling behaviour are hardcoded, which falsifies the
+/// PRD's core claim that the rules live in data.
+model GovernanceSetting {
+  id                        String                    @id @default("singleton")
+  scoreStrategy             ScoreStrategy             @default(VALUE_WEIGHTED) @map("score_strategy")
+  unconfiguredCeilingPolicy UnconfiguredCeilingPolicy @default(DENY) @map("unconfigured_ceiling_policy")
+  stalledAfterDays          Int                       @default(7) @map("stalled_after_days")
+  /// A discount this many points above the rep's own historical average
+  /// raises a DISCOUNT_ANOMALY signal (PDF §4-B9).
+  anomalyDeviationPoints    Decimal                   @default(5) @map("anomaly_deviation_points") @db.Decimal(5, 2)
+  updatedAt                 DateTime                  @updatedAt @map("updated_at")
+
+  @@map("governance_settings")
+}
+
+/// Optional per-category override of the tier ceiling.
+/// CHANGED: both FKs are now nullable.
+///   (tier, category) -> most specific rule
+///   (null, category) -> applies to that category for every tier
+///   (tier, null)     -> applies to every category for that tier
+/// The engine takes the STRICTEST of everything that matches, then falls back
+/// to CustomerTier.maxDiscountPercent, then to unconfiguredCeilingPolicy.
+model DiscountRule {
+  id             String  @id @default(cuid())
+  customerTierId String? @map("customer_tier_id")
+  categoryId     String? @map("category_id")
+
+  customerTier CustomerTier?    @relation(fields: [customerTierId], references: [id], onDelete: Cascade)
+  category     ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  maxDiscountPercent Decimal @map("max_discount_percent") @db.Decimal(5, 2)
+  /// Suggestions and lines below this margin are blocked / flagged (PDF §4-A6).
+  minMarginPercent   Decimal @default(0) @map("min_margin_percent") @db.Decimal(5, 2)
+  priority           Int     @default(0) // tie-breaker for which rule's minMargin applies
+  isActive           Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // ⚠ Postgres treats NULLs as distinct — this will NOT block duplicate
+  //   (null, categoryId) rows. See invariant 4 in the header.
+  @@unique([customerTierId, categoryId])
+  @@index([categoryId])
+  @@map("discount_rules")
+}
+
+/// A named approval ladder. Exactly one is active at a time (invariant 1).
+/// CHANGED: the score range moved OFF the policy and ONTO the steps.
+/// The old shape could not route on worstLineOverage at all, so the PDF's own
+/// §10 example (one line 8 points over inside a large order) was unroutable
+/// without also flagging every clean quotation.
+model ApprovalPolicy {
+  id        String               @id @default(cuid())
+  name      String               @unique
+  isActive  Boolean              @default(true) @map("is_active")
+  steps     ApprovalPolicyStep[]
+  approvals QuotationApproval[]
+  createdAt DateTime             @default(now()) @map("created_at")
+  updatedAt DateTime             @updatedAt @map("updated_at")
+
+  @@map("approval_policies")
+}
+
+/// One rung of the ladder. A rung fires when EITHER trigger is crossed:
+///
+///     blendedScore     >= minBlendedScore      (many small violations)
+///  OR worstLineOverage >= minWorstLineOverage  (one badly over line)
+///
+/// Two triggers because the PDF describes two different failures and no single
+/// number can see both. A null trigger means "this dimension never fires it".
+/// Arbitrary length, so a third approver is a ROW, not a deploy (PDF §4-A3).
+model ApprovalPolicyStep {
+  id               String         @id @default(cuid())
+  approvalPolicyId String         @map("approval_policy_id")
+  approvalPolicy   ApprovalPolicy @relation(fields: [approvalPolicyId], references: [id], onDelete: Cascade)
+  roleId           String         @map("role_id")
+  role             Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  stepOrder           Int      @map("step_order")
+  minBlendedScore     Decimal? @map("min_blended_score") @db.Decimal(6, 2)
+  minWorstLineOverage Decimal? @map("min_worst_line_overage") @db.Decimal(6, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([approvalPolicyId, stepOrder])
+  @@index([roleId])
+  @@map("approval_policy_steps")
+}
+
+// ============================================================================
+//  CATALOG                                                        [Track 1]
+// ============================================================================
+
+model ProductCategory {
+  id            String         @id @default(cuid())
+  name          String         @unique
+  description   String?
+  products      Product[]
+  discountRules DiscountRule[]
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  @@map("product_categories")
+}
+
+model Product {
+  id          String          @id @default(cuid())
+  sku         String          @unique
+  name        String
+  description String?
+  categoryId  String          @map("category_id")
+  category    ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  productType ProductType @default(ONE_TIME) @map("product_type")
+  basePrice   Decimal     @map("base_price") @db.Decimal(14, 2)
+  /// The margin source. Every margin number in the app derives from this.
+  costPrice   Decimal     @map("cost_price") @db.Decimal(14, 2)
+  unit        String      @default("unit")
+  taxRate     Decimal     @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  /// Promoted products rank higher in upsell suggestions (PDF §4-A6).
+  isPromoted  Boolean     @default(false) @map("is_promoted")
+  isActive    Boolean     @default(true) @map("is_active")
+
+  variants          ProductVariant[]
+  subscriptionPlans SubscriptionPlan[]
+  priceListItems    PriceListItem[]
+  inventory         Inventory[]
+  quotationLines    QuotationLine[]
+  orderLines        OrderLine[]
+  coPurchaseSources CoPurchaseRule[]   @relation("CoPurchaseSource")
+  coPurchaseTargets CoPurchaseRule[]   @relation("CoPurchaseSuggested")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([categoryId])
+  @@map("products")
+}
+
+/// ADDED (missing from the input schema). Required by PDF §4-A2:
+/// "Variants: Attribute (example: Size or Pack), Values, Extra prices".
+/// The UI for this is #3 on the PRD's cut list — but the TABLE stays, because
+/// adding a table after the hour-0 freeze is far more expensive than carrying
+/// an unused one.
+model ProductVariant {
+  id         String  @id @default(cuid())
+  productId  String  @map("product_id")
+  product    Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  attribute  String // "Size", "Pack"
+  value      String // "Large", "12-pack"
+  extraPrice Decimal @default(0) @map("extra_price") @db.Decimal(14, 2)
+  isActive   Boolean @default(true) @map("is_active")
+
+  quotationLines QuotationLine[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([productId, attribute, value])
+  @@map("product_variants")
+}
+
+/// ADDED (missing from the input schema). Required by PDF §4-A2:
+/// "Price Lists: Customer tier based pricing, currency specific rules".
+/// UI is #2 on the cut list; same freeze argument as ProductVariant.
+model PriceList {
+  id        String          @id @default(cuid())
+  name      String          @unique
+  currency  String          @default("INR")
+  isActive  Boolean         @default(true) @map("is_active")
+  items     PriceListItem[]
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  @@map("price_lists")
+}
+
+model PriceListItem {
+  id          String    @id @default(cuid())
+  priceListId String    @map("price_list_id")
+  productId   String    @map("product_id")
+  priceList   PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  price       Decimal   @db.Decimal(14, 2)
+
+  @@unique([priceListId, productId])
+  @@index([productId])
+  @@map("price_list_items")
+}
+
+/// A recurring plan attached to a product (PDF §4-A5).
+/// productId stays REQUIRED so `price` is unambiguous; the service must check
+/// that a line's plan belongs to that line's product (invariant 5).
+model SubscriptionPlan {
+  id        String  @id @default(cuid())
+  productId String  @map("product_id")
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String
+
+  billingInterval           BillingInterval @default(MONTHLY) @map("billing_interval")
+  price                     Decimal         @db.Decimal(14, 2)
+  prorationEnabled          Boolean         @default(true) @map("proration_enabled")
+  cancellationRefundPercent Decimal         @default(0) @map("cancellation_refund_percent") @db.Decimal(5, 2)
+  isActive                  Boolean         @default(true) @map("is_active")
+
+  quotationLines QuotationLine[]
+  orderLines     OrderLine[]
+  subscriptions  Subscription[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([productId])
+  @@map("subscription_plans")
+}
+
+/// Upsell / cross-sell pairings (PDF §4-A6).
+/// CHANGED: added minMarginPercent — §4-A6 puts the margin floor on the
+/// suggestion rule itself ("only healthy margin suggestions surface").
+model CoPurchaseRule {
+  id                 String  @id @default(cuid())
+  sourceProductId    String  @map("source_product_id")
+  suggestedProductId String  @map("suggested_product_id")
+  sourceProduct      Product @relation("CoPurchaseSource", fields: [sourceProductId], references: [id], onDelete: Cascade)
+  suggestedProduct   Product @relation("CoPurchaseSuggested", fields: [suggestedProductId], references: [id], onDelete: Cascade)
+
+  coPurchaseCount  Int     @default(0) @map("co_purchase_count")
+  weight           Decimal @default(1) @db.Decimal(6, 2)
+  minMarginPercent Decimal @default(0) @map("min_margin_percent") @db.Decimal(5, 2)
+  isActive         Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([sourceProductId, suggestedProductId])
+  @@index([suggestedProductId])
+  @@map("co_purchase_rules")
+}
+
+// ============================================================================
+//  INVENTORY                                                      [Track 3]
+// ============================================================================
+
+model Warehouse {
+  id             String  @id @default(cuid())
+  code           String  @unique
+  name           String
+  address        String?
+  /// Relative cost of shipping from here. The split algorithm minimises the
+  /// number of warehouses first, then breaks ties on this (PDF §4-A4).
+  shippingWeight Decimal @default(1) @map("shipping_weight") @db.Decimal(6, 2)
+  priority       Int     @default(0)
+  isActive       Boolean @default(true) @map("is_active")
+
+  inventory   Inventory[]
+  allocations FulfillmentAllocation[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("warehouses")
+}
+
+model Inventory {
+  id          String    @id @default(cuid())
+  warehouseId String    @map("warehouse_id")
+  productId   String    @map("product_id")
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// GROSS quantity physically present. Sellable = availableQty - reservedQty.
+  availableQty Int @default(0) @map("available_qty")
+  reservedQty  Int @default(0) @map("reserved_qty")
+  reorderLevel Int @default(0) @map("reorder_level")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([warehouseId, productId])
+  @@index([productId])
+  @@map("inventory")
+}
+
+// ============================================================================
+//  QUOTATION                                                      [Track 1]
+// ============================================================================
+
+model Quotation {
+  id              String @id @default(cuid())
+  quotationNumber String @unique @map("quotation_number")
+
+  customerId     String       @map("customer_id")
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  salesRepId     String       @map("sales_rep_id")
+  salesRep       User         @relation("QuotationRep", fields: [salesRepId], references: [id], onDelete: Restrict)
+  /// Snapshot of the customer's tier when the quote was raised, so a later
+  /// tier change does not silently rewrite this deal's history.
+  customerTierId String       @map("customer_tier_id")
+  customerTier   CustomerTier @relation(fields: [customerTierId], references: [id], onDelete: Restrict)
+
+  status  QuotationStatus @default(DRAFT)
+  version Int             @default(1) // bumped on each re-issue; a counter, not history
+
+  // ── Totals (written by Track 1) ──
+  subtotal      Decimal @default(0) @db.Decimal(14, 2)
+  discountTotal Decimal @default(0) @map("discount_total") @db.Decimal(14, 2)
+  taxTotal      Decimal @default(0) @map("tax_total") @db.Decimal(14, 2)
+  grandTotal    Decimal @default(0) @map("grand_total") @db.Decimal(14, 2)
+  marginAmount  Decimal @default(0) @map("margin_amount") @db.Decimal(14, 2)
+  marginPercent Decimal @default(0) @map("margin_percent") @db.Decimal(5, 2)
+
+  // ── Governance verdict (written ONLY by Track 2) ──
+  // CHANGED: the input schema had blendedScore, worstLineOverage AND riskScore
+  // with no definition separating riskScore from blendedScore. Two names for
+  // one number is how two tracks end up writing different values. Dropped it.
+  /// Σ(overage × lineValue) / Σ lineValue, under the configured ScoreStrategy.
+  blendedScore        Decimal @default(0) @map("blended_score") @db.Decimal(6, 2)
+  /// max(overage) across lines. The second routing dimension.
+  worstLineOverage    Decimal @default(0) @map("worst_line_overage") @db.Decimal(6, 2)
+  marginFloorBreached Boolean @default(false) @map("margin_floor_breached")
+
+  validUntil         DateTime? @map("valid_until")
+  promisedDeliveryAt DateTime? @map("promised_delivery_at")
+  /// Source of truth for STALLED_DEAL detection.
+  lastActivityAt     DateTime  @default(now()) @map("last_activity_at")
+  sentToCustomerAt   DateTime? @map("sent_to_customer_at")
+  confirmedAt        DateTime? @map("confirmed_at")
+
+  lines         QuotationLine[]
+  approvals     QuotationApproval[]
+  negotiations  Negotiation[]
+  portalTokens  PortalToken[]
+  healthSignals DealHealthSignal[]
+  auditLogs     AuditLog[]
+  order         Order?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([customerId])
+  @@index([salesRepId])
+  @@index([status, lastActivityAt]) // stalled-deal + pipeline queries
+  @@map("quotations")
+}
+
+model QuotationLine {
+  id          String    @id @default(cuid())
+  quotationId String    @map("quotation_id")
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  productId          String            @map("product_id")
+  product            Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productVariantId   String?           @map("product_variant_id")
+  productVariant     ProductVariant?   @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+  subscriptionPlanId String?           @map("subscription_plan_id")
+  subscriptionPlan   SubscriptionPlan? @relation(fields: [subscriptionPlanId], references: [id], onDelete: Restrict)
+
+  lineType LineType @default(ONE_TIME) @map("line_type")
+  quantity Int
+
+  // ── SNAPSHOTS: captured on write, never recomputed ──
+  unitPrice               Decimal @map("unit_price") @db.Decimal(14, 2)
+  unitCost                Decimal @map("unit_cost") @db.Decimal(14, 2)
+  /// The ceiling that was in force for this line at this moment. This single
+  /// field is why an approval from yesterday still explains itself after an
+  /// Admin lowers a ceiling today.
+  effectiveCeilingPercent Decimal @map("effective_ceiling_percent") @db.Decimal(5, 2)
+  minMarginPercent        Decimal @default(0) @map("min_margin_percent") @db.Decimal(5, 2)
+
+  discountPercent Decimal @default(0) @map("discount_percent") @db.Decimal(5, 2)
+  taxRate         Decimal @default(0) @map("tax_rate") @db.Decimal(5, 2)
+
+  // ── Derived (overagePts written by Track 2, the rest by Track 1) ──
+  /// max(0, discountPercent - effectiveCeilingPercent)
+  overagePts        Decimal @default(0) @map("overage_pts") @db.Decimal(6, 2)
+  lineTotal         Decimal @map("line_total") @db.Decimal(14, 2)
+  lineMarginPercent Decimal @map("line_margin_percent") @db.Decimal(5, 2)
+
+  /// Set when the line came from the upsell panel — lets reporting show
+  /// whether suggestions actually convert (PDF §4-B5).
+  addedViaUpsell Boolean @default(false) @map("added_via_upsell")
+  position       Int     @default(0)
+
+  orderLine           OrderLine?
+  negotiationRequests NegotiationRequest[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([quotationId])
+  @@index([productId])
+  @@map("quotation_lines")
+}
+
+// ============================================================================
+//  APPROVAL                                                       [Track 2]
+// ============================================================================
+
+/// One approval CYCLE. A quotation can have several: cycle 1 from the rep
+/// submitting (§9 step 3), cycle 2 after the customer counters (§9 step 7).
+/// Keeping cycles as separate rows is what makes the re-entry auditable
+/// instead of overwriting the first review.
+model QuotationApproval {
+  id               String         @id @default(cuid())
+  quotationId      String         @map("quotation_id")
+  quotation        Quotation      @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  approvalPolicyId String         @map("approval_policy_id")
+  approvalPolicy   ApprovalPolicy @relation(fields: [approvalPolicyId], references: [id], onDelete: Restrict)
+
+  approvalCycle Int            @map("approval_cycle")
+  status        ApprovalStatus @default(PENDING)
+
+  // Snapshots of the verdict at the moment approval was requested.
+  blendedScore     Decimal @map("blended_score") @db.Decimal(6, 2)
+  worstLineOverage Decimal @map("worst_line_overage") @db.Decimal(6, 2)
+  /// Per-line explanation, stored rather than recomputed. This is what lets a
+  /// reviewer answer "why is this on my desk?" in under 10 seconds (PRD M7).
+  /// Shape: [{ lineId, productName, discountPercent, ceilingPercent, overagePts }]
+  findings         Json?
+
+  triggeredBy TriggerSource @default(REP_SUBMIT) @map("triggered_by")
+  startedAt   DateTime      @default(now()) @map("started_at")
+  completedAt DateTime?     @map("completed_at")
+
+  steps QuotationApprovalStep[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([quotationId, approvalCycle])
+  @@index([status])
+  @@map("quotation_approvals")
+}
+
+model QuotationApprovalStep {
+  id                  String            @id @default(cuid())
+  quotationApprovalId String            @map("quotation_approval_id")
+  quotationApproval   QuotationApproval @relation(fields: [quotationApprovalId], references: [id], onDelete: Cascade)
+  roleId              String            @map("role_id")
+  role                Role              @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  reviewerId          String?           @map("reviewer_id")
+  reviewer            User?             @relation("StepReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+
+  stepOrder Int            @map("step_order")
+  status    ApprovalStatus @default(PENDING)
+  /// PDF §4-A3: every approval, rejection and edit is logged with a reason.
+  reason    String?
+  actedAt   DateTime?      @map("acted_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([quotationApprovalId, stepOrder])
+  @@index([reviewerId])
+  @@map("quotation_approval_steps")
+}
+
+// ============================================================================
+//  NEGOTIATION                                                    [Track 4]
+// ============================================================================
+
+/// A negotiation SESSION on a quotation. At most one OPEN per quotation
+/// (invariant 3). Grouping requests under a session is what lets the portal
+/// show a conversation rather than a pile of disconnected asks.
+model Negotiation {
+  id          String            @id @default(cuid())
+  quotationId String            @map("quotation_id")
+  quotation   Quotation         @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  status      NegotiationStatus @default(OPEN)
+  openedAt    DateTime          @default(now()) @map("opened_at")
+  closedAt    DateTime?         @map("closed_at")
+
+  requests NegotiationRequest[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([quotationId, status])
+  @@map("negotiations")
+}
+
+model NegotiationRequest {
+  id              String         @id @default(cuid())
+  negotiationId   String         @map("negotiation_id")
+  negotiation     Negotiation    @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+  quotationLineId String?        @map("quotation_line_id")
+  quotationLine   QuotationLine? @relation(fields: [quotationLineId], references: [id], onDelete: SetNull)
+  respondedById   String?        @map("responded_by_id")
+  respondedBy     User?          @relation("NegotiationResponder", fields: [respondedById], references: [id], onDelete: SetNull)
+
+  actorType   ActorType   @default(CUSTOMER) @map("actor_type")
+  requestType RequestType @default(DISCOUNT) @map("request_type")
+
+  proposedDiscountPercent Decimal? @map("proposed_discount_percent") @db.Decimal(5, 2)
+  proposedQuantity        Int?     @map("proposed_quantity")
+  message                 String
+
+  status          RequestStatus @default(OPEN)
+  responseMessage String?       @map("response_message")
+  respondedAt     DateTime?     @map("responded_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([negotiationId])
+  @@index([quotationLineId])
+  @@map("negotiation_requests")
+}
+
+// ============================================================================
+//  ORDER & FULFILLMENT                                            [Track 3]
+// ============================================================================
+
+/// Created by confirmQuotationToOrder(). Lines are COPIED, not referenced, so
+/// nothing a rep or customer does to the quotation afterwards can rewrite what
+/// was allocated or invoiced.
+model Order {
+  id          String    @id @default(cuid())
+  orderNumber String    @unique @map("order_number")
+  quotationId String    @unique @map("quotation_id")
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Restrict)
+  customerId  String    @map("customer_id")
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  status      OrderStatus @default(PENDING_FULFILLMENT)
+  totalAmount Decimal     @map("total_amount") @db.Decimal(14, 2)
+  confirmedAt DateTime    @default(now()) @map("confirmed_at")
+
+  lines         OrderLine[]
+  allocations   FulfillmentAllocation[]
+  subscriptions Subscription[]
+  invoices      Invoice[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([customerId])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderLine {
+  id              String        @id @default(cuid())
+  orderId         String        @map("order_id")
+  order           Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// Provenance back to the quote line this was frozen from.
+  quotationLineId String        @unique @map("quotation_line_id")
+  quotationLine   QuotationLine @relation(fields: [quotationLineId], references: [id], onDelete: Restrict)
+
+  productId          String            @map("product_id")
+  product            Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  subscriptionPlanId String?           @map("subscription_plan_id")
+  subscriptionPlan   SubscriptionPlan? @relation(fields: [subscriptionPlanId], references: [id], onDelete: Restrict)
+
+  lineType        LineType @default(ONE_TIME) @map("line_type")
+  quantity        Int
+  unitPrice       Decimal  @map("unit_price") @db.Decimal(14, 2)
+  unitCost        Decimal  @map("unit_cost") @db.Decimal(14, 2)
+  discountPercent Decimal  @default(0) @map("discount_percent") @db.Decimal(5, 2)
+  taxRate         Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  lineTotal       Decimal  @map("line_total") @db.Decimal(14, 2)
+
+  allocations  FulfillmentAllocation[]
+  subscription Subscription?
+  invoiceLines InvoiceLine[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([orderId])
+  @@map("order_lines")
+}
+
+/// One row per (order line, warehouse). Backorder is a QUANTITY on the row,
+/// not a separate table.
+/// CHANGED: warehouseId is nullable — a line that NO warehouse can serve still
+/// needs somewhere to record its backorder.
+/// Shipment count shown on the fulfillment screen = count of distinct
+/// non-null warehouseId for the order (PDF §4-B6).
+model FulfillmentAllocation {
+  id          String     @id @default(cuid())
+  orderId     String     @map("order_id")
+  order       Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderLineId String     @map("order_line_id")
+  orderLine   OrderLine  @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
+  warehouseId String?    @map("warehouse_id")
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+
+  allocatedQty Int     @default(0) @map("allocated_qty")
+  fulfilledQty Int     @default(0) @map("fulfilled_qty")
+  backorderQty Int     @default(0) @map("backorder_qty")
+  shippingCost Decimal @default(0) @map("shipping_cost") @db.Decimal(14, 2)
+
+  status           FulfillmentStatus @default(PLANNED)
+  /// True when a human overrode the suggested split (PDF §4-B6).
+  isManualOverride Boolean           @default(false) @map("is_manual_override")
+  /// ADDED: gives DELIVERY_SLIPPAGE something to compare against
+  /// Quotation.promisedDeliveryAt.
+  shippedAt        DateTime?         @map("shipped_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([orderLineId, warehouseId])
+  @@index([orderId])
+  @@index([warehouseId])
+  @@map("fulfillment_allocations")
+}
+
+// ============================================================================
+//  BILLING                                                  [Track 3 + 4]
+// ============================================================================
+
+model Subscription {
+  id                 String           @id @default(cuid())
+  orderId            String           @map("order_id")
+  order              Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderLineId        String           @unique @map("order_line_id")
+  orderLine          OrderLine        @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
+  customerId         String           @map("customer_id")
+  customer           Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  subscriptionPlanId String           @map("subscription_plan_id")
+  subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Restrict)
+
+  status    SubscriptionStatus @default(ACTIVE)
+  quantity  Int
+  unitPrice Decimal            @map("unit_price") @db.Decimal(14, 2)
+
+  startDate          DateTime  @map("start_date")
+  currentPeriodStart DateTime  @map("current_period_start")
+  currentPeriodEnd   DateTime  @map("current_period_end")
+  cancelledAt        DateTime? @map("cancelled_at")
+
+  billingSchedules BillingSchedule[]
+  creditNotes      CreditNote[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([orderId])
+  @@index([customerId])
+  @@map("subscriptions")
+}
+
+/// One row per billing period. Generating these on order confirmation is what
+/// makes §9 step 6 work: one-time lines invoice immediately, recurring lines
+/// produce a schedule — same order, two separate billing streams.
+model BillingSchedule {
+  id             String       @id @default(cuid())
+  subscriptionId String       @map("subscription_id")
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  billingDate     DateTime @map("billing_date")
+  periodStart     DateTime @map("period_start")
+  periodEnd       DateTime @map("period_end")
+  quantity        Int
+  /// 1.0 = a full period. < 1.0 = prorated (mid-cycle change).
+  prorationFactor Decimal  @default(1) @map("proration_factor") @db.Decimal(6, 4)
+  amount          Decimal  @db.Decimal(14, 2)
+
+  status  BillingStatus @default(SCHEDULED)
+  invoice Invoice?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([subscriptionId, periodStart])
+  @@index([status, billingDate])
+  @@map("billing_schedules")
+}
+
+model Invoice {
+  id                String           @id @default(cuid())
+  invoiceNumber     String           @unique @map("invoice_number")
+  orderId           String           @map("order_id")
+  order             Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  /// Set only on recurring invoices — the period this bills.
+  billingScheduleId String?          @unique @map("billing_schedule_id")
+  billingSchedule   BillingSchedule? @relation(fields: [billingScheduleId], references: [id], onDelete: SetNull)
+
+  invoiceType InvoiceType   @default(ONE_TIME) @map("invoice_type")
+  status      InvoiceStatus @default(DRAFT)
+  issueDate   DateTime?     @map("issue_date")
+  dueDate     DateTime?     @map("due_date")
+
+  subtotal    Decimal @db.Decimal(14, 2)
+  taxAmount   Decimal @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  totalAmount Decimal @map("total_amount") @db.Decimal(14, 2)
+  /// Kept in sync with sum(payments.amount). PARTIALLY_PAID exists because it
+  /// is the first thing a judge tries after "record a payment".
+  amountPaid  Decimal @default(0) @map("amount_paid") @db.Decimal(14, 2)
+
+  lines       InvoiceLine[]
+  payments    Payment[]
+  creditNotes CreditNote[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([orderId])
+  @@index([status])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id          String     @id @default(cuid())
+  invoiceId   String     @map("invoice_id")
+  invoice     Invoice    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  orderLineId String?    @map("order_line_id")
+  orderLine   OrderLine? @relation(fields: [orderLineId], references: [id], onDelete: SetNull)
+
+  description     String
+  /// CHANGED to Int — every other quantity in the schema is an Int, and
+  /// prorationFactor already carries the fractional part.
+  quantity        Int
+  unitPrice       Decimal @map("unit_price") @db.Decimal(14, 2)
+  prorationFactor Decimal @default(1) @map("proration_factor") @db.Decimal(6, 4)
+  taxAmount       Decimal @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  lineTotal       Decimal @map("line_total") @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([invoiceId])
+  @@map("invoice_lines")
+}
+
+model Payment {
+  id           String  @id @default(cuid())
+  invoiceId    String  @map("invoice_id")
+  invoice      Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  recordedById String  @map("recorded_by_id")
+  recordedBy   User    @relation("PaymentRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  amount               Decimal       @db.Decimal(14, 2)
+  paymentMethod        PaymentMethod @default(BANK_TRANSFER) @map("payment_method")
+  transactionReference String?       @map("transaction_reference")
+  paidAt               DateTime      @map("paid_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([invoiceId])
+  @@map("payments")
+}
+
+/// Records that a refund / cancellation condition occurred (PDF §4-A5).
+/// The PRD scopes this to RECORDING the event — no refund processing.
+model CreditNote {
+  id             String        @id @default(cuid())
+  invoiceId      String        @map("invoice_id")
+  invoice        Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  subscriptionId String?       @map("subscription_id")
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  issuedById     String        @map("issued_by_id")
+  issuedBy       User          @relation("CreditNoteIssuer", fields: [issuedById], references: [id], onDelete: Restrict)
+
+  amount   Decimal  @db.Decimal(14, 2)
+  reason   String
+  issuedAt DateTime @default(now()) @map("issued_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([invoiceId])
+  @@map("credit_notes")
+}
+
+// ============================================================================
+//  MONITORING & AUDIT                                             [Track 4]
+// ============================================================================
+
+model DealHealthSignal {
+  id          String    @id @default(cuid())
+  quotationId String    @map("quotation_id")
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  signalType SignalType @map("signal_type")
+  severity   Severity   @default(MEDIUM)
+  score      Decimal?   @db.Decimal(6, 2)
+  message    String
+  detectedAt DateTime   @default(now()) @map("detected_at")
+  resolvedAt DateTime?  @map("resolved_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([quotationId, resolvedAt])
+  @@index([signalType, severity])
+  @@map("deal_health_signals")
+}
+
+/// Append-only by convention: the audit module exposes record() and nothing
+/// else — no update, no delete.
+/// CHANGED: userId is now NULLABLE and actorType was added. §9 step 3's whole
+/// point is that the SYSTEM routed the quotation, not the rep — and portal
+/// actions come from a customer who has no User row at all. With a required
+/// userId, neither could be recorded honestly.
+model AuditLog {
+  id          String     @id @default(cuid())
+  userId      String?    @map("user_id")
+  user        User?      @relation("AuditActor", fields: [userId], references: [id], onDelete: SetNull)
+  quotationId String?    @map("quotation_id")
+  quotation   Quotation? @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+
+  actorType  ActorType @default(USER) @map("actor_type")
+  entityType String    @map("entity_type") // "Quotation", "DiscountRule", ...
+  entityId   String    @map("entity_id")
+  action     String // QUOTE_CONFIRMED | APPROVAL_GRANTED | CEILING_CHANGED | ...
+  oldValue   Json?     @map("old_value")
+  newValue   Json?     @map("new_value")
+  reason     String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([quotationId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}

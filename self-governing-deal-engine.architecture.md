@@ -40,7 +40,7 @@ claims (ceilings, thresholds, chain shape, and the scoring strategy are all data
 paying for a DSL nobody has time to debug at 3am.
 
 A second fork was the order model — one record whose status advances, versus a separate
-`SalesOrder` created at confirmation. **Chosen: separate `SalesOrder`.** It costs ~6 models
+`Order` created at confirmation. **Chosen: separate `Order`.** It costs ~6 models
 and a copy step, but it gives a genuinely immutable downstream truth: once confirmed,
 fulfillment and billing read the order, and nothing a rep or customer does to the quotation
 can retroactively change what was allocated or invoiced. That is the honest answer to
@@ -61,7 +61,7 @@ architectural ideas doing the real work:
 
 2. **Snapshots at the line, freeze at the order.** Every `QuotationLine` stores the unit
    price, unit cost and *ceiling in force* at the moment it was written. Confirmation copies
-   lines into `SalesOrderLine`. Together these settle three PRD open questions at once —
+   lines into `OrderLine`. Together these settle three PRD open questions at once —
    margin is stable, the audit trail means something, and a retroactive ceiling change stops
    being a paradox.
 
@@ -80,7 +80,7 @@ architectural ideas doing the real work:
 | Frontend | **Next.js 16, App Router, JavaScript, Tailwind 4** | Already scaffolded. **JS not TS**: converting mid-hackathon with 4 people costs hours and the PRD asks for beginner-friendly code. Cost — Prisma's generated types go unused; mitigate with JSDoc on engine functions only. |
 | Data fetching | **Client-side only** (`"use client"` + a small `apiClient.js`) | Next as an SPA shell. Server Components + token forwarding is more correct and will cost ~2h of auth debugging you don't have. |
 | Backend | **Express 5 on Node 22, ESM** | Already scaffolded; smallest thing that does the job. Nest/Fastify buy nothing here. |
-| ORM | **Prisma** | Chosen by the team. Migrations + a readable single-file schema are exactly right for a schema-heavy 4-way split. |
+| ORM | **Prisma, pinned to `6.19.3`** | Chosen by the team. ⚠ **Do not run `prisma@latest`** — it currently resolves to `8.0.0-rc.13`, a release candidate whose CLI is reorganized (`prisma orm`, no `validate`). Prisma 7 also moves the datasource URL into `prisma.config.ts` and requires a driver adapter. 6.19.3 keeps `url = env("DATABASE_URL")` and matches every tutorial the team will find. |
 | DB | **PostgreSQL 18, local** | `NUMERIC` for money, real enums, `Json` for audit payloads. |
 | Auth | **JWT, Bearer header**, `bcryptjs` for hashes | Separate origins (3000/4000) make httpOnly cookies a CORS/SameSite fight. Bearer + `localStorage` is simpler; the XSS trade-off is accepted for a demo and recorded in Open Questions. |
 | Validation | **`zod`** at every controller boundary | One dependency, and it turns malformed input into a readable error instead of a Prisma stack trace — which is what a probing judge will actually produce. |
@@ -97,23 +97,28 @@ architectural ideas doing the real work:
 
 ### Data model
 
-Roughly 28 models in five clusters. Relations are shown as `──<` (one-to-many).
+> **`backend/prisma/schema.prisma` is the source of truth** — 35 models, 21 enums,
+> validated and generating on Prisma 6.19.3. This section records the *decisions* behind
+> it; it does not restate the field list, so the two cannot drift.
+
+Five clusters. `──<` is one-to-many, `──1` one-to-one.
 
 ```
-IDENTITY          CATALOG                    GOVERNANCE  (the thesis)
-User              ProductCategory ──< Product        CustomerTier.maxDiscountPct
-CustomerTier ──< Customer          ──< ProductVariant CategoryDiscountCeiling
-                  PriceList ──< PriceListItem        ApprovalPolicy ──< ApprovalStep
-                  UpsellRule                         GovernanceSetting (singleton)
+IDENTITY                       CATALOG                          GOVERNANCE (the thesis)
+Role ──< User                  ProductCategory ──< Product      GovernanceSetting (singleton)
+CustomerTier ──< Customer      Product ──< ProductVariant       CustomerTier.maxDiscountPercent
+Quotation ──< PortalToken              ──< SubscriptionPlan     DiscountRule  (tier × category)
+                               PriceList ──< PriceListItem      ApprovalPolicy ──< ApprovalPolicyStep
+                               CoPurchaseRule (upsell pairs)
 
-DEAL                                    FULFILLMENT & REVENUE
-Quotation ──< QuotationLine             SalesOrder ──< SalesOrderLine
-   ├──< ApprovalRequest ──< ApprovalTask     │             ├──< Allocation ──> Warehouse
-   ├──< NegotiationRequest                   │             ├──< Subscription ──< BillingScheduleEntry
-   ├──< PortalToken                          │             └──< InvoiceLine
-   ├──< AuditEvent                           ├──< Shipment ──< Allocation
-   └──1 SalesOrder      (created on confirm) └──< Invoice ──< Payment
-                                                          Warehouse ──< StockLevel
+DEAL                                                 FULFILLMENT & REVENUE
+Quotation ──< QuotationLine                          Order ──< OrderLine
+   ├──< QuotationApproval ──< QuotationApprovalStep     │        ├──< FulfillmentAllocation ──> Warehouse
+   ├──< Negotiation ──< NegotiationRequest              │        ├──1 Subscription ──< BillingSchedule
+   ├──< DealHealthSignal                                │        └──< InvoiceLine
+   ├──< AuditLog                                        └──< Invoice ──< Payment
+   └──1 Order         (lines COPIED on confirm)                         └──< CreditNote
+                                                     Warehouse ──< Inventory
 ```
 
 #### Governance cluster — where the thesis lives
@@ -122,183 +127,126 @@ Quotation ──< QuotationLine             SalesOrder ──< SalesOrderLine
 enum ScoreStrategy             { VALUE_WEIGHTED  SUM_OF_POINTS  ABSOLUTE_MARGIN }
 enum UnconfiguredCeilingPolicy { DENY  TIER_ONLY  PERMISSIVE }
 
-model CustomerTier {
-  id             String  @id @default(cuid())
-  name           String  @unique              // Bronze / Silver / Gold
-  maxDiscountPct Decimal @db.Decimal(5, 2)    // the tier ceiling
-}
-
-model CategoryDiscountCeiling {
-  categoryId     String
-  tierId         String?                      // null = applies to every tier
-  maxDiscountPct Decimal @db.Decimal(5, 2)
-  @@unique([categoryId, tierId])
-}
-
-model GovernanceSetting {                     // exactly one row, id = "singleton"
-  id                        String                    @id @default("singleton")
+model GovernanceSetting {          // exactly one row, id = "singleton"
   scoreStrategy             ScoreStrategy             @default(VALUE_WEIGHTED)
   unconfiguredCeilingPolicy UnconfiguredCeilingPolicy @default(DENY)
   stalledAfterDays          Int                       @default(7)
 }
 
-model ApprovalPolicy { id String @id @default(cuid())  name String @unique  active Boolean @default(true) }
+model CustomerTier  { maxDiscountPercent Decimal? }   // PDF 4-A3 bullet 1: the TIER ceiling
+model DiscountRule  { customerTierId String?          // PDF 4-A3 bullet 2: optional override
+                      categoryId     String?          // either side null = "applies to all"
+                      maxDiscountPercent Decimal
+                      minMarginPercent   Decimal }
 
-model ApprovalStep {
-  policyId           String
-  sequence           Int
-  approverRole       UserRole                  // SALES_MANAGER | FINANCE | ...
-  triggerScore       Decimal? @db.Decimal(6, 2)  // fires if riskScore       >= this
-  triggerMaxLineOver Decimal? @db.Decimal(6, 2)  // OR   if maxLineOverage   >= this
-  @@unique([policyId, sequence])
+model ApprovalPolicyStep {
+  roleId              String                      // FK -> Role (a ROW, not an enum)
+  stepOrder           Int
+  minBlendedScore     Decimal?                    // fires if blendedScore     >= this
+  minWorstLineOverage Decimal?                    // OR   if worstLineOverage  >= this
 }
 ```
 
-`ApprovalStep` is the decision that stops Manager → Finance being hardcoded: it's an
+`ApprovalPolicyStep` is the decision that stops Manager → Finance being hardcoded: an
 **ordered ladder of arbitrary length**, each rung carrying its own two triggers. A quote
-activates every step whose trigger it crosses, in sequence order. Adding a third approver is
-a row, not a deploy.
+activates every step whose trigger it crosses, in sequence. Adding a third approver is a
+row, not a deploy. **Roles are rows too**, so a new rung can be a role that did not exist at
+build time — the cost is that role checks read `role.code`, so it must ride in the JWT.
 
 **Note on "no defaults":** the PRD forbids defaulting *ceilings and thresholds* — and none
-are defaulted; `CustomerTier`, `CategoryDiscountCeiling` and `ApprovalStep` all start empty.
-`GovernanceSetting`'s defaults are different in kind: they set the engine's visible *mode*,
-and the Admin can see and change both.
+are. `CustomerTier.maxDiscountPercent`, `DiscountRule` and `ApprovalPolicyStep` all start
+empty or null. `GovernanceSetting`'s defaults are different in kind: they set the engine's
+visible *mode*, and the Admin can see and change both.
 
-#### Deal cluster — snapshots are the point
-
-```prisma
-enum QuotationStatus { DRAFT PENDING_APPROVAL APPROVED REJECTED SENT UNDER_NEGOTIATION CONFIRMED CANCELLED }
-enum LineBillingType { ONE_TIME  RECURRING }
-
-model Quotation {
-  id, number, customerId, ownerId (rep), status, currency
-  subtotal, discountTotal, taxTotal, total      Decimal(14,2)
-  marginAmount Decimal(14,2)   marginPct Decimal(5,2)
-  riskScore Decimal(6,2)       maxLineOverage Decimal(6,2)   requiresApproval Boolean
-  lastActivityAt DateTime      // the single source for "stalled"
-}
-
-model QuotationLine {
-  quotationId, productId, variantId?, description, quantity
-  billingType LineBillingType   planId String?      // set when RECURRING
-
-  // ── SNAPSHOTS: captured when the line is written, never recomputed ──
-  unitPriceSnapshot Decimal(14,2)
-  unitCostSnapshot  Decimal(14,2)   // the margin source
-  appliedCeilingPct Decimal(5,2)    // the ceiling that was in force, then
-  discountPct       Decimal(5,2)
-
-  // ── DERIVED: recomputed on every write by the engine ──
-  overagePoints Decimal(6,2)   lineSubtotal Decimal(14,2)   lineMargin Decimal(14,2)
-}
-```
-
-`appliedCeilingPct` is the small field that does the heavy lifting. It's why an approval
-from yesterday still explains itself after the Admin lowers a ceiling today.
-
-#### The scoring rule (PRD open question ★2 — settled)
+#### Ceiling resolution (strictest wins, then fall back)
 
 ```
-ceilingᵢ  = min(tierCeiling, categoryCeilingᵢ)      // stricter of the two wins
-overageᵢ  = max(0, discountᵢ − ceilingᵢ)
+1. DiscountRule (tier, category)     — most specific
+2. DiscountRule (null, category)     — category-wide
+3. DiscountRule (tier, null)         — tier-wide
+4. CustomerTier.maxDiscountPercent   — the tier ceiling
+5. GovernanceSetting.unconfiguredCeilingPolicy   — DENY => 0%
 
-riskScore      = Σ(overageᵢ × lineValueᵢ) / Σ lineValueᵢ     // value-weighted
-maxLineOverage = max(overageᵢ)
-
-An ApprovalStep fires when   riskScore >= step.triggerScore
-                        OR   maxLineOverage >= step.triggerMaxLineOver
+effectiveCeilingPercent = min(every rule that matched)
 ```
 
-Two triggers, because the PDF describes two different failures and one number can't see
-both:
+Snapshotted onto `QuotationLine.effectiveCeilingPercent` at write time. That one field is
+why an approval from yesterday still explains itself after an Admin lowers a ceiling today.
 
-| Case | riskScore | maxLineOverage | Routed by |
+#### The scoring rule (PRD open question 2 — settled)
+
+```
+ceiling_i  = effectiveCeilingPercent (resolved above, snapshotted on the line)
+overage_i  = max(0, discountPercent_i - ceiling_i)      ->  QuotationLine.overagePts
+
+blendedScore     = SUM(overage_i x lineValue_i) / SUM(lineValue_i)   // value-weighted
+worstLineOverage = max(overage_i)
+
+An ApprovalPolicyStep fires when   blendedScore     >= step.minBlendedScore
+                              OR   worstLineOverage >= step.minWorstLineOverage
+```
+
+Two triggers, because the PDF describes two different failures and one number cannot see both:
+
+| Case | blendedScore | worstLineOverage | Routed by |
 |---|---|---|---|
-| §10 example — laptop ₹1000 @12% (ceiling 15), service ₹200 @18% (ceiling 10) | 1.33 | **8.00** | max-line |
-| Many-small — three equal lines 2 / 3 / 2 points over | **2.33** | 3.00 | riskScore |
+| §10 example — laptop ₹1000 @12% (ceiling 15), service ₹200 @18% (ceiling 10) | 1.33 | **8.00** | worstLineOverage |
+| Many-small — three equal lines 2 / 3 / 2 points over | **2.33** | 3.00 | blendedScore |
 | Clean quote — every line inside its ceiling | 0 | 0 | *nothing fires* ✓ (M4) |
 
-The middle row is the PRD's M3 metric and its WRONG condition: a worst-single-line score
-alone would rank that quote *below* a single 3-point violation, which is exactly the
-blindness §10 exists to describe.
+The middle row is PRD metric M3 and its WRONG condition. A worst-single-line score alone
+would rank that quote *below* a single 3-point violation — exactly the blindness §10 exists
+to describe. **A single score range on the policy cannot express this**, which is why the
+thresholds sit on the step rather than on `ApprovalPolicy`.
 
-#### Unconfigured ceilings (PRD open question ★1 — settled)
+#### Unconfigured ceilings (PRD open question 1 — settled)
 
-**`DENY`.** A `(tier, category)` pair with no ceiling configured resolves to **0%** — any
-discount at all is overage and routes. Fail-safe, consistent with the thesis, and it makes
-§9 step 1 a *real* user action: until the Admin configures, nothing flows clean.
+**`DENY`.** A line with nothing configured anywhere in the resolution chain resolves to
+**0%** — any discount at all is overage and routes. Fail-safe, consistent with the thesis,
+and it makes §9 step 1 a *real* user action: until the Admin configures, nothing flows clean.
 
 > **Consequence the seed script must honour:** a half-seeded database routes *everything*.
 > Seed data must cover every (tier × category) pair the demo touches, or the demo looks broken.
 
-#### Retroactive config changes (PRD open question ★3 — settled)
+#### Retroactive config changes (PRD open question 3 — settled)
 
 - Approved quotes are **grandfathered** — an Admin lowering a ceiling does not retro-route them.
-- **Any** mutation (line edit, discount change, negotiation outcome) re-runs `evaluate()`
-  against *current* config and can re-route. This is the mechanism behind §9 step 7.
-- The dashboard flags approved-but-now-non-compliant deals as an anomaly rather than
-  silently reopening them.
+- **Any** mutation (line edit, discount change, negotiation outcome) re-runs the engine
+  against *current* config and can open a new `QuotationApproval` cycle. This is the
+  mechanism behind §9 step 7, and `approvalCycle` is what keeps cycle 1 readable afterwards
+  instead of being overwritten.
+- The dashboard raises a `DealHealthSignal` for approved-but-now-non-compliant deals rather
+  than silently reopening them.
 
-#### Fulfillment & revenue cluster
+#### Fulfillment — backorder is a quantity, not a table
 
-```prisma
-model Warehouse   { name, code, shippingCostWeight Decimal(6,2), active }
-model StockLevel  { warehouseId, productId, quantityOnHand, reorderPoint, reorderQty
-                    @@unique([warehouseId, productId]) }
+`FulfillmentAllocation` holds one row per (order line, warehouse) carrying `allocatedQty`,
+`fulfilledQty` and `backorderQty`. `warehouseId` is **nullable** so a line no warehouse can
+serve still has somewhere to record its backorder. The shipment count on the §4-B6 screen is
+`count(distinct warehouseId)` for the order — no separate `Shipment` table.
 
-enum AllocationStatus { ALLOCATED BACKORDERED SHIPPED }
-model Allocation  { orderLineId, warehouseId String?,  // null ⇒ backorder
-                    quantity, status, shipmentId? }
-model Shipment    { orderId, warehouseId, estimatedCost, status }
-```
+**Split algorithm:** greedy — fewest warehouses first, ties broken by lowest
+`Warehouse.shippingWeight`; any remainder becomes backorder quantity. See Spike 2.
 
-Shipment count — the number the §4-B6 screen displays — is just `count(Shipment)` for the
-order. **Split algorithm:** greedy — fewest warehouses first, ties broken by lowest
-`shippingCostWeight`; any remainder becomes an `Allocation` with `warehouseId = null`,
-which *is* the backorder. No separate backorder table.
+#### Hybrid billing falls out of the schema
 
-```prisma
-model SubscriptionPlan     { name, interval MONTHLY|QUARTERLY|YEARLY, intervalCount,
-                             prorationPolicy, cancellationNoticeDays, refundOnCancel }
-model Subscription         { orderLineId @unique, planId, startDate, status, nextBillingAt }
-model BillingScheduleEntry { subscriptionId, sequence, periodStart, periodEnd, amount,
-                             prorated, status SCHEDULED|INVOICED|SKIPPED }
-
-enum InvoiceStatus { DRAFT POSTED PARTIALLY_PAID PAID CANCELLED }
-model Invoice     { number, orderId, type ONE_TIME|RECURRING, status, totals, amountPaid }
-model InvoiceLine { invoiceId, orderLineId?, scheduleEntryId?, description, qty, unitPrice, amount }
-model Payment     { invoiceId, amount, method, reference, receivedAt, recordedById }
-```
-
-**Hybrid billing (§9 step 6) falls out of the schema rather than needing special logic:**
-one-time order lines produce `InvoiceLine`s on an `Invoice(type: ONE_TIME)`; recurring lines
-produce a `Subscription` whose `BillingScheduleEntry` rows are billed onto separate
-`Invoice(type: RECURRING)` records. Same order, two invoice streams, no branching in the UI.
-
-**Partial payments are supported** (`PARTIALLY_PAID`, `amountPaid`). Cheap to add, and it's
-the first thing a probing judge tries after "record a payment".
+§9 step 6 needs no branching logic: one-time `OrderLine`s produce `InvoiceLine`s on an
+`Invoice(ONE_TIME)`; recurring lines produce a `Subscription` whose `BillingSchedule` rows
+each bill onto their own `Invoice(RECURRING)` (one-to-one via `billingScheduleId`). Same
+order, two invoice streams. **Partial payments are supported** (`PARTIALLY_PAID`,
+`amountPaid`) — the first thing a probing judge tries after "record a payment".
 
 #### Audit trail
 
-```prisma
-model AuditEvent {
-  quotationId String?   entityType String   entityId String
-  action      String    // QUOTE_CONFIRMED · APPROVAL_GRANTED · CEILING_CHANGED · …
-  actorType   ActorType // USER | SYSTEM | CUSTOMER
-  actorUserId String?   reason String?   payload Json?   createdAt DateTime
-  @@index([quotationId, createdAt])
-}
-```
+`AuditLog` is append-only **by convention**: the audit module exposes `record()` and nothing
+else — no update, no delete. `userId` is nullable and `actorType` carries `USER | CUSTOMER |
+SYSTEM`, because §9 step 3's whole point is that *the system* routed the quotation, and
+portal actions come from a customer who has no `User` row. A required `userId` could record
+neither honestly.
 
-Append-only **by convention**: the audit module exposes `record()` and nothing else — no
-update, no delete. `actorType: SYSTEM` is what makes "the system routed this automatically"
-(§9 step 3) visible in the trail rather than looking like a missing actor.
-
-`ApprovalRequest.findingsJson` stores the per-line explanation *at request time*. That is
-what makes PRD metric M7 (a reviewer says why in under 10 seconds) achievable — the
+`QuotationApproval.findings` (Json) stores the per-line explanation *at request time*. That
+is what makes PRD metric M7 (a reviewer says why in under 10 seconds) achievable — the
 approval screen renders a stored explanation instead of recomputing one.
-
----
 
 ### Boundaries & contracts
 
@@ -362,7 +310,7 @@ backend/
         rules/
           resolveCeiling.js       ← pure, no imports from prisma
           scoreQuotation.js       ← pure
-          selectApprovalSteps.js  ← pure
+          selectApprovalPolicySteps.js  ← pure
     app.js
   index.js
 ```
@@ -412,18 +360,18 @@ the critical path, not a nice-to-have.
 
 ### T2 · §9 steps 3–4 — Governance, Approvals & Upsell  ← *the thesis*
 
-`CategoryDiscountCeiling`, `ApprovalPolicy`/`ApprovalStep`, `GovernanceSetting`, `UpsellRule`
-CRUD + admin screens · the pure `rules/` engine · `ApprovalRequest`/`ApprovalTask` lifecycle
-(approve / reject / return) · `AuditEvent` module · approval screen with the score breakdown
+`DiscountRule`, `ApprovalPolicy`/`ApprovalPolicyStep`, `GovernanceSetting`, `CoPurchaseRule`
+CRUD + admin screens · the pure `rules/` engine · `QuotationApproval`/`QuotationApprovalStep` lifecycle
+(approve / reject / return) · `AuditLog` module · approval screen with the score breakdown
 · upsell panel with live margin delta.
 
 This track owns the PRD's depth bet. If T2 finishes early, depth goes here — not elsewhere.
 
 ### T3 · §9 steps 5–6 — Fulfillment & Subscription Billing
 
-`Warehouse`, `StockLevel`, `SubscriptionPlan` CRUD + admin screens ·
-**`confirmQuotationToOrder()`** — the quotation → `SalesOrder` copy · the greedy allocation
-split · backorders · `Subscription` + `BillingScheduleEntry` generation · fulfillment screen ·
+`Warehouse`, `Inventory`, `SubscriptionPlan` CRUD + admin screens ·
+**`confirmQuotationToOrder()`** — the quotation → `Order` copy · the greedy allocation
+split · backorders · `Subscription` + `BillingSchedule` generation · fulfillment screen ·
 subscription & billing screen.
 
 ### T4 · §9 steps 7–8 — Portal, Negotiation & Revenue
@@ -440,18 +388,18 @@ returning fixture data** before anyone starts, so no track ever waits on another
 
 | Contract | Owner | Called by |
 |---|---|---|
-| `evaluateQuotation(quotationId) → { riskScore, maxLineOverage, findings[], requiredSteps[] }` | T2 | T1 (on line write), T4 (after negotiation) |
-| `requestApproval(quotationId, evaluation) → ApprovalRequest` | T2 | T1, T4 |
-| `confirmQuotationToOrder(quotationId) → SalesOrder` | T3 | T4 |
+| `evaluateQuotation(quotationId) → { blendedScore, worstLineOverage, findings[], requiredSteps[] }` | T2 | T1 (on line write), T4 (after negotiation) |
+| `requestApproval(quotationId, evaluation) → QuotationApproval` | T2 | T1, T4 |
+| `confirmQuotationToOrder(quotationId) → Order` | T3 | T4 |
 | `generateInvoicesForOrder(orderId) → Invoice[]` | T4 | T3 |
 
 ### Who writes what (Rule 2, made concrete)
 
 | Table | T1 writes | T2 writes | T3 writes | T4 writes |
 |---|---|---|---|---|
-| `QuotationLine` | inputs + snapshots + `lineSubtotal`/`lineMargin` | `overagePoints` | — (reads, copies) | — |
-| `Quotation` | totals, `lastActivityAt` | `riskScore`, `maxLineOverage`, `requiresApproval`, approval status transitions | `status → CONFIRMED` | `status → UNDER_NEGOTIATION` |
-| `AuditEvent` | via `record()` | **owns the module** | via `record()` | via `record()` |
+| `QuotationLine` | inputs + snapshots + `lineTotal`/`lineMarginPercent` | `overagePts` | — (reads, copies) | — |
+| `Quotation` | totals, `lastActivityAt` | `blendedScore`, `worstLineOverage`, `marginFloorBreached`, `status → PENDING_APPROVAL/APPROVED/REJECTED` | `status → CONFIRMED` | `status → UNDER_NEGOTIATION` |
+| `AuditLog` | via `record()` | **owns the module** | via `record()` | via `record()` |
 | Everything else | own cluster | own cluster | own cluster | own cluster |
 
 ### The one-way door: the schema
@@ -547,7 +495,7 @@ Deliberately deferred. Each names what would settle it.
       needed", which implies partials are expected.
 - [ ] **Bearer token in `localStorage`** is XSS-exposed. Accepted for the demo; *settled for
       production by* moving to httpOnly cookies with a CORS allowlist.
-- [ ] **Upsell pairings at hour zero.** `UpsellRule.weight` is meant to come from co-purchase
+- [ ] **Upsell pairings at hour zero.** `CoPurchaseRule.weight` is meant to come from co-purchase
       history that won't exist. Admin enters pairings by hand for the demo — *settled by*
       accepting that, and saying so if a judge asks where the ranking comes from.
 - [ ] **Who supplies the concrete demo numbers** (tier ceilings, category ceilings, step
