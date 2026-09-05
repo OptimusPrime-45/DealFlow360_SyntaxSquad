@@ -1,6 +1,9 @@
 import express from "express";
 import cors from "cors";
 import authRouter from "./routes/auth.routes.js";
+import governanceRouter from "./routes/governance.routes.js";
+import approvalRouter from "./routes/approval.routes.js";
+import auditRouter from "./routes/audit.routes.js";
 import { errorHandler } from "./middleware/error.middleware.js";
 
 const app = express();
@@ -26,6 +29,9 @@ app.get("/api/health", (req, res) => {
 
 // Routes
 app.use("/api/auth", authRouter);
+app.use("/api/governance", governanceRouter);
+app.use("/api/approvals", approvalRouter);
+app.use("/api/audit-logs", auditRouter);
 
 // Global centralized error handler
 app.use(errorHandler);
