@@ -62,7 +62,9 @@ export default function AdminLayout({ children }) {
 
   if (!user) return null;
 
-  const isAdmin = user.role === "ADMIN" || user.role?.code === "ADMIN";
+  const roleCode = typeof user.role === "string" ? user.role : user.role?.code;
+  const isAdmin = roleCode === "ADMIN";
+  const isManager = roleCode === "SALES_MANAGER";
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] flex flex-col font-sans">
@@ -88,7 +90,7 @@ export default function AdminLayout({ children }) {
             <div className="text-xs font-semibold text-[#212529]">{user.fullName}</div>
             <div className="text-[10px] text-[#6C757D]">{user.email}</div>
           </div>
-          <Badge variant={isAdmin ? "success" : "warning"} size="sm">
+          <Badge variant={isAdmin ? "success" : isManager ? "warning" : "neutral"} size="sm">
             {user.roleName || user.role?.name || user.role}
           </Badge>
           <Link href="/" className="text-xs font-medium text-[#6C757D] hover:text-[#714B67] transition-colors ml-2">
@@ -97,10 +99,17 @@ export default function AdminLayout({ children }) {
         </div>
       </header>
 
-      {!isAdmin && (
+      {isManager ? (
+        <div className="bg-[#EBF3FC] border-b border-[#0D6EFD]/20 px-6 py-2.5 text-xs text-[#084298] flex items-center justify-between">
+          <span>
+            Signed in as <strong>Sales Manager</strong>. You have permissions to configure <strong>Customer Tiers</strong>, <strong>Discount Rules</strong>, and the <strong>Approval Ladder</strong>.
+          </span>
+          <Badge variant="info" size="sm">Manager Governance</Badge>
+        </div>
+      ) : !isAdmin && (
         <div className="bg-[#FFF4E5] border-b border-[#FD7E14]/30 px-6 py-2.5 text-xs text-[#7A4100]">
           You are signed in as <strong>{user.roleName || user.role}</strong>. Configuration is
-          readable, but saving requires the ADMIN role — the API will reject writes.
+          readable, but saving requires ADMIN or SALES_MANAGER permissions.
         </div>
       )}
 

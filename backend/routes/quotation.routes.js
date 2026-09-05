@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   getQuotations,
   getQuotationById,
+  getDealHealth,
   createQuotation,
   deleteQuotation,
   submitQuotation,
@@ -24,6 +25,8 @@ router.use(authenticate);
 const canBuildQuotes = requireRole("ADMIN", "SALES_REP", "SALES_MANAGER");
 
 router.get("/", getQuotations);
+// Deal health dashboard & at-risk monitor (must be mounted before /:id)
+router.get("/deal-health", getDealHealth);
 router.get("/:id", getQuotationById);
 router.post("/", canBuildQuotes, createQuotation);
 

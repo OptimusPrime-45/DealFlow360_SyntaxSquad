@@ -1276,11 +1276,40 @@ async function main() {
     },
   });
 
+  // --- Baseline Quote 5: Stalled Negotiation Deal (CyberDyne Robotics Systems) ---
+  // Inactive for 10 days (> 7-day governance threshold), demonstrating stalled deal monitoring
+  const q5Lines = [
+    buildLineSnapshot({
+      productId: products["HW-SERVER-2U"].id,
+      quantity: 2,
+      discountPercent: 12.0,
+      effectiveCeilingPercent: 15.0,
+      position: 0,
+    }),
+  ];
+  const q5Totals = computeQuoteTotals(q5Lines);
+
+  const demoQ5 = await prisma.quotation.create({
+    data: {
+      quotationNumber: "QTN-2026-005",
+      customerId: customers["dev@cyberdyne.co.in"].id,
+      salesRepId: users["rep@dealflow360.com"].id,
+      customerTierId: tiers["GOLD"].id,
+      status: "UNDER_NEGOTIATION",
+      ...q5Totals,
+      lastActivityAt: new Date(Date.now() - 10 * 24 * 3600 * 1000), // 10 days inactive
+      lines: {
+        create: q5Lines.map(({ _math, _taxAmount, _productName, ...l }) => l),
+      },
+    },
+  });
+
   console.log("✔ Baseline demo quotations & orders seeded across pipeline stages:");
   console.log("   • QTN-2026-001 [DRAFT]: In Builder with Upsell item");
   console.log("   • QTN-2026-002 [PENDING_APPROVAL]: Over-Ceiling (8 pts) awaiting Manager Review");
   console.log("   • QTN-2026-003 [APPROVED] -> ORD-2026-001 [ALLOCATED]: Multi-Warehouse 2-Hub Split (9 East + 3 Main)");
   console.log("   • QTN-2026-004 [COMPLETED] -> ORD-2026-002 [COMPLETED]: Invoiced & Paid with Bank Transfer");
+  console.log("   • QTN-2026-005 [UNDER_NEGOTIATION]: Stalled deal (10d inactive) awaiting Manager intervention");
 
   console.log("\n======================================================================");
   console.log(" ALL SEEDING COMPLETED SUCCESSFULLY — READY FOR PIPELINE VERIFICATION! ");

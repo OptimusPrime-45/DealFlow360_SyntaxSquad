@@ -27,7 +27,7 @@ import { Button, Card, Badge } from "../components/ui/index.js";
 const ROLE_SUMMARY = {
   ADMIN: "You configure the rules the deal engine runs on, and can see everything.",
   SALES_REP: "You build quotations and follow them through approval and fulfillment.",
-  SALES_MANAGER: "You review deals that exceed policy, and own the ceilings that decide which ones do.",
+  SALES_MANAGER: "You review over-threshold quotes, monitor stalled & at-risk deals, and configure discount tiers and approval chains.",
   FINANCE: "You handle second-level approvals, fulfillment decisions, and billing.",
 };
 
@@ -46,7 +46,7 @@ const DESTINATIONS = [
   {
     href: "/quotations",
     label: "Quotations Pipeline",
-    blurb: "Active and draft deals, with their blended score and worst line.",
+    blurb: "Active and draft deals, with their blended score, worst line, and stalled status.",
     roles: ["ADMIN", "SALES_REP", "SALES_MANAGER", "FINANCE"],
     primaryFor: ["SALES_REP"],
   },
@@ -58,8 +58,8 @@ const DESTINATIONS = [
   },
   {
     href: "/approvals",
-    label: "Approvals",
-    blurb: "Deals routed to you, with the per-line reason they were routed.",
+    label: "Approvals & Deal Health",
+    blurb: "Review quotations exceeding policy, monitor stalled deals, and inspect at-risk health signals.",
     roles: ["ADMIN", "SALES_MANAGER", "FINANCE"],
     primaryFor: ["SALES_MANAGER", "FINANCE"],
   },
@@ -83,7 +83,7 @@ const DESTINATIONS = [
     primaryFor: ["ADMIN"],
     // §3 gives the Sales Manager tiers and approval chains; everything else in
     // here is Admin-only and the API enforces that on every write.
-    note: { SALES_MANAGER: "You can change discount tiers and the approval ladder." },
+    note: { SALES_MANAGER: "You can configure customer discount tiers, discount rules, and the approval ladder." },
   },
 ];
 

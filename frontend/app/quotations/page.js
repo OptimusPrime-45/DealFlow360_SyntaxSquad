@@ -16,6 +16,7 @@ export default function QuotationsPage() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("");
   const [repFilter, setRepFilter] = useState("");
+  const [stalledOnly, setStalledOnly] = useState(false);
   const [error, setError] = useState("");
 
   const isManagerOrAdmin = user?.role === "SALES_MANAGER" || user?.role === "ADMIN" || user?.role === "FINANCE";
@@ -33,6 +34,7 @@ export default function QuotationsPage() {
       const params = new URLSearchParams();
       if (statusFilter) params.append("status", statusFilter);
       if (repFilter) params.append("salesRepId", repFilter);
+      if (stalledOnly) params.append("stalled", "true");
       const queryStr = params.toString() ? `?${params.toString()}` : "";
 
       const res = await apiClient.get(`/quotations${queryStr}`);
@@ -62,7 +64,7 @@ export default function QuotationsPage() {
     if (isAuthenticated) {
       fetchQuotations();
     }
-  }, [isAuthenticated, statusFilter, repFilter]);
+  }, [isAuthenticated, statusFilter, repFilter, stalledOnly]);
 
   const statusColors = {
     DRAFT: "gray",
@@ -169,6 +171,19 @@ export default function QuotationsPage() {
               </select>
             </div>
 
+            {/* Stalled Only Filter Button */}
+            <button
+              onClick={() => setStalledOnly((prev) => !prev)}
+              className={`h-9 px-3 text-xs font-semibold rounded-[6px] transition-all flex items-center gap-1.5 border ${
+                stalledOnly
+                  ? "bg-[#E03131] text-white border-[#E03131] shadow-xs"
+                  : "bg-white text-[#495057] border-[#CED4DA] hover:bg-[#F8F9FA]"
+              }`}
+            >
+              <span>⚠️ Stalled Deals</span>
+              {stalledOnly && <span className="text-[10px]">✓</span>}
+            </button>
+
             <Button
               variant="secondary"
               size="sm"
@@ -260,12 +275,24 @@ export default function QuotationsPage() {
                   </Badge>
                 </td>
                 <td className="py-3 px-4">
-                  <Badge
-                    variant={statusColors[q.status] || "neutral"}
-                    size="sm"
-                  >
-                    {q.status}
-                  </Badge>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <Badge
+                      variant={statusColors[q.status] || "neutral"}
+                      size="sm"
+                    >
+                      {q.status}
+                    </Badge>
+                    {(() => {
+                      const msInactive = Date.now() - new Date(q.lastActivityAt || q.createdAt).getTime();
+                      const daysInactive = Math.floor(msInactive / (24 * 60 * 60 * 1000));
+                      const isStalled = daysInactive >= 7 && !["CONFIRMED", "CANCELLED", "REJECTED"].includes(q.status);
+                      return isStalled ? (
+                        <Badge variant="danger" size="sm" title={`Inactive for ${daysInactive} days`}>
+                          Stalled ({daysInactive}d)
+                        </Badge>
+                      ) : null;
+                    })()}
+                  </div>
                 </td>
                 <td className="py-3 px-4 text-xs text-[#6C757D]">
                   {q._count?.lines || 0} items

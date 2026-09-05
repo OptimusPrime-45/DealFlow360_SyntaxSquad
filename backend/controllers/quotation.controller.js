@@ -54,10 +54,19 @@ const generateQuotationNumber = async () => {
  * GET /api/quotations
  */
 export const getQuotations = asyncHandler(async (req, res) => {
-  const { status, customerId, salesRepId, search } = req.query;
+  const { status, customerId, salesRepId, search, stalled, days } = req.query;
 
   const userRole = req.user?.role?.code;
   const isSalesRep = userRole === "SALES_REP";
+
+  let stalledCutoff = null;
+  if (stalled === "true" || stalled === true) {
+    const govSetting = await prisma.governanceSetting.findUnique({
+      where: { id: "singleton" },
+    });
+    const stalledDays = days ? Number(days) : (govSetting?.stalledAfterDays ?? 7);
+    stalledCutoff = new Date(Date.now() - stalledDays * 24 * 60 * 60 * 1000);
+  }
 
   const where = {
     ...(status && { status: String(status) }),
@@ -72,6 +81,10 @@ export const getQuotations = asyncHandler(async (req, res) => {
         { quotationNumber: { contains: String(search), mode: "insensitive" } },
         { customer: { name: { contains: String(search), mode: "insensitive" } } },
       ],
+    }),
+    ...(stalledCutoff && {
+      lastActivityAt: { lte: stalledCutoff },
+      status: { in: ["DRAFT", "PENDING_APPROVAL", "SENT", "UNDER_NEGOTIATION", "APPROVED"] },
     }),
   };
 
@@ -89,6 +102,183 @@ export const getQuotations = asyncHandler(async (req, res) => {
   return res
     .status(200)
     .json(new ApiResponse(200, { quotations }, "Quotations retrieved successfully"));
+});
+
+/**
+ * Deal Health & At-Risk Quotations Dashboard
+ * GET /api/quotations/deal-health
+ */
+export const getDealHealth = asyncHandler(async (req, res) => {
+  const { days } = req.query;
+  const userRole = req.user?.role?.code;
+  const isSalesRep = userRole === "SALES_REP";
+
+  const govSetting = await prisma.governanceSetting.findUnique({
+    where: { id: "singleton" },
+  });
+  const stalledThresholdDays = days ? Number(days) : (govSetting?.stalledAfterDays ?? 7);
+  const now = new Date();
+  const stalledCutoff = new Date(now.getTime() - stalledThresholdDays * 24 * 60 * 60 * 1000);
+  const overdueApprovalCutoff = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+
+  // Active open statuses
+  const activeStatuses = ["DRAFT", "PENDING_APPROVAL", "SENT", "UNDER_NEGOTIATION", "APPROVED"];
+
+  const quotations = await prisma.quotation.findMany({
+    where: {
+      status: { in: activeStatuses },
+      ...(isSalesRep ? { salesRepId: req.user.id } : {}),
+    },
+    include: {
+      customer: { select: { id: true, name: true, contactEmail: true } },
+      customerTier: { select: { id: true, code: true, name: true, maxDiscountPercent: true } },
+      salesRep: { select: { id: true, fullName: true, email: true } },
+      lines: {
+        select: {
+          id: true,
+          discountPercent: true,
+          effectiveCeilingPercent: true,
+          overagePts: true,
+          lineMarginPercent: true,
+          product: { select: { name: true, sku: true } },
+        },
+      },
+      approvals: {
+        where: { status: "PENDING" },
+        include: {
+          steps: {
+            where: { status: "PENDING" },
+            include: { role: { select: { id: true, code: true, name: true } } },
+          },
+        },
+      },
+    },
+    orderBy: { lastActivityAt: "asc" },
+  });
+
+  const evaluatedQuotations = quotations.map((q) => {
+    const lastActivity = q.lastActivityAt ? new Date(q.lastActivityAt) : new Date(q.createdAt);
+    const msInactive = now.getTime() - lastActivity.getTime();
+    const daysInactive = Math.floor(msInactive / (24 * 60 * 60 * 1000));
+    const hoursInactive = Math.floor(msInactive / (60 * 60 * 1000));
+
+    const signals = [];
+
+    // 1. Stalled Deal Signal
+    const isStalled = daysInactive >= stalledThresholdDays;
+    if (isStalled) {
+      signals.push({
+        signalType: "STALLED_DEAL",
+        severity: daysInactive >= 14 ? "CRITICAL" : daysInactive >= 7 ? "HIGH" : "MEDIUM",
+        message: `Deal stalled: no activity for ${daysInactive} days (threshold: ${stalledThresholdDays}d)`,
+        detectedAt: now,
+      });
+    }
+
+    // 2. Margin Floor Breach Signal
+    const margin = Number(q.marginPercent ?? 0);
+    const floorBreached = q.marginFloorBreached || (margin > 0 && margin < 15.0);
+    if (floorBreached) {
+      signals.push({
+        signalType: "MARGIN_FLOOR_BREACH",
+        severity: "CRITICAL",
+        message: `Margin floor breach: overall margin ${margin.toFixed(1)}% is below 15% threshold`,
+        detectedAt: now,
+      });
+    }
+
+    // 3. Discount Anomaly Signal
+    const worstOverage = Number(q.worstLineOverage ?? 0);
+    const score = Number(q.blendedScore ?? 0);
+    if (worstOverage >= 8.0 || score >= 4.0) {
+      signals.push({
+        signalType: "DISCOUNT_ANOMALY",
+        severity: worstOverage >= 15.0 ? "CRITICAL" : "HIGH",
+        message: `High discount deviation: line exceeds ceiling by ${worstOverage.toFixed(1)} pts`,
+        detectedAt: now,
+      });
+    }
+
+    // 4. Approval Overdue Signal
+    if (q.status === "PENDING_APPROVAL" && lastActivity <= overdueApprovalCutoff) {
+      signals.push({
+        signalType: "APPROVAL_OVERDUE",
+        severity: "HIGH",
+        message: `Approval overdue: pending review for ${hoursInactive} hours`,
+        detectedAt: now,
+      });
+    }
+
+    // 5. Delivery Slippage Signal
+    if (q.promisedDeliveryAt) {
+      const deliveryDate = new Date(q.promisedDeliveryAt);
+      const daysUntilDelivery = Math.ceil(
+        (deliveryDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)
+      );
+      if (daysUntilDelivery <= 3 && q.status !== "CONFIRMED") {
+        signals.push({
+          signalType: "DELIVERY_SLIPPAGE",
+          severity: daysUntilDelivery < 0 ? "CRITICAL" : "MEDIUM",
+          message:
+            daysUntilDelivery < 0
+              ? `Delivery slippage: promised delivery date passed without confirmation`
+              : `Delivery date imminent (${daysUntilDelivery}d remaining) while quotation unconfirmed`,
+          detectedAt: now,
+        });
+      }
+    }
+
+    // Composite health status
+    let healthStatus = "HEALTHY";
+    if (signals.some((s) => s.severity === "CRITICAL")) {
+      healthStatus = "CRITICAL";
+    } else if (signals.some((s) => s.severity === "HIGH")) {
+      healthStatus = "HIGH_RISK";
+    } else if (signals.length > 0) {
+      healthStatus = "MODERATE_RISK";
+    }
+
+    return {
+      ...q,
+      daysInactive,
+      hoursInactive,
+      isStalled,
+      signals,
+      healthStatus,
+    };
+  });
+
+  const stalledQuotations = evaluatedQuotations.filter((q) => q.isStalled);
+  const atRiskQuotations = evaluatedQuotations.filter((q) => q.signals.length > 0);
+
+  const summary = {
+    totalActiveQuotations: quotations.length,
+    stalledThresholdDays,
+    stalledCount: stalledQuotations.length,
+    stalledTotalValue: stalledQuotations.reduce(
+      (sum, q) => sum + Number(q.grandTotal ?? 0),
+      0
+    ),
+    atRiskCount: atRiskQuotations.length,
+    atRiskTotalValue: atRiskQuotations.reduce(
+      (sum, q) => sum + Number(q.grandTotal ?? 0),
+      0
+    ),
+    criticalRiskCount: atRiskQuotations.filter((q) => q.healthStatus === "CRITICAL").length,
+    pendingApprovalsCount: quotations.filter((q) => q.status === "PENDING_APPROVAL").length,
+  };
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        summary,
+        stalledQuotations,
+        atRiskQuotations,
+      },
+      "Deal health evaluated successfully"
+    )
+  );
 });
 
 /**

@@ -12,8 +12,8 @@ const router = Router();
 router.use(authenticate);
 
 router.get("/", getCustomerTiers);
-router.post("/", requireRole("ADMIN"), createCustomerTier);
-router.patch("/:id", requireRole("ADMIN"), updateCustomerTier);
-router.delete("/:id", requireRole("ADMIN"), deleteCustomerTier);
+router.post("/", requireRole("ADMIN", "SALES_MANAGER"), createCustomerTier);
+router.patch("/:id", requireRole("ADMIN", "SALES_MANAGER"), updateCustomerTier);
+router.delete("/:id", requireRole("ADMIN", "SALES_MANAGER"), deleteCustomerTier);
 
 export default router;
