@@ -1,11 +1,16 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext.js";
 import apiClient from "../../lib/apiClient.js";
-import { Button, Card, Badge, Table } from "../../components/ui/index.js";
+import { Button, Badge } from "../../components/ui/index.js";
+import { OdooControlPanel } from "../../components/ui/OdooControlPanel.jsx";
+import { GroupedTable } from "../../components/ui/GroupedTable.jsx";
+import { BatchActionBar } from "../../components/ui/BatchActionBar.jsx";
+import { BTreeSearchIndex } from "../../lib/btree.js";
+import { exportToCSV } from "../../lib/exportCsv.js";
 
 export default function QuotationsPage() {
   const router = useRouter();
@@ -14,11 +19,23 @@ export default function QuotationsPage() {
   const [quotations, setQuotations] = useState([]);
   const [salesReps, setSalesReps] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState("");
-  const [repFilter, setRepFilter] = useState("");
   const [error, setError] = useState("");
 
-  const isManagerOrAdmin = user?.role === "SALES_MANAGER" || user?.role === "ADMIN" || user?.role === "FINANCE";
+  // Search, Filter & Group By State
+  const [searchTerm, setSearchTerm] = useState("");
+  const [activeFilters, setActiveFilters] = useState({
+    status: [],
+    salesRepId: "",
+    tier: [],
+    anomaly: "",
+  });
+  const [activeGroupBy, setActiveGroupBy] = useState("");
+
+  // Selection state
+  const [selectedIds, setSelectedIds] = useState(new Set());
+
+  const isManagerOrAdmin =
+    user?.role === "SALES_MANAGER" || user?.role === "ADMIN" || user?.role === "FINANCE";
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -30,26 +47,19 @@ export default function QuotationsPage() {
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams();
-      if (statusFilter) params.append("status", statusFilter);
-      if (repFilter) params.append("salesRepId", repFilter);
-      const queryStr = params.toString() ? `?${params.toString()}` : "";
-
-      const res = await apiClient.get(`/quotations${queryStr}`);
+      // Backend automatically applies role scoping (sales rep sees only their own quotes)
+      const res = await apiClient.get("/quotations");
       const data = res.quotations || [];
       setQuotations(data);
 
-      // Collect available sales reps for the manager dropdown
       if (isManagerOrAdmin) {
-        setSalesReps((prev) => {
-          const repMap = new Map(prev.map((r) => [r.id, r]));
-          data.forEach((q) => {
-            if (q.salesRep?.id) {
-              repMap.set(q.salesRep.id, q.salesRep);
-            }
-          });
-          return Array.from(repMap.values());
+        const repMap = new Map();
+        data.forEach((q) => {
+          if (q.salesRep?.id) {
+            repMap.set(q.salesRep.id, q.salesRep);
+          }
         });
+        setSalesReps(Array.from(repMap.values()));
       }
     } catch (err) {
       setError(err.message || "Failed to load quotations");
@@ -62,7 +72,118 @@ export default function QuotationsPage() {
     if (isAuthenticated) {
       fetchQuotations();
     }
-  }, [isAuthenticated, statusFilter, repFilter]);
+  }, [isAuthenticated]);
+
+  // Build client-side B-Tree Search Index
+  const btreeIndex = useMemo(() => {
+    const index = new BTreeSearchIndex({ degree: 3 });
+    quotations.forEach((q) => {
+      index.insertRecord(q.id, {
+        quotationNumber: q.quotationNumber,
+        customerName: q.customer?.name || "",
+        customerEmail: q.customer?.contactEmail || "",
+        salesRepName: q.salesRep?.fullName || "",
+        salesRepEmail: q.salesRep?.email || "",
+        status: q.status || "",
+        tier: q.customerTier?.name || q.customerTier?.code || "",
+      });
+    });
+    return index;
+  }, [quotations]);
+
+  // Filter and Search Pipeline
+  const filteredQuotations = useMemo(() => {
+    let result = quotations;
+
+    // 1. Fast B-Tree Search Index Query
+    if (searchTerm.trim()) {
+      const matchIds = btreeIndex.query(searchTerm.trim());
+      result = result.filter((q) => matchIds.has(q.id));
+    }
+
+    // 2. Status Filter
+    if (activeFilters.status && activeFilters.status.length > 0) {
+      const statusSet = new Set(activeFilters.status);
+      result = result.filter((q) => statusSet.has(q.status));
+    }
+
+    // 3. Sales Rep Filter
+    if (activeFilters.salesRepId) {
+      result = result.filter((q) => q.salesRep?.id === activeFilters.salesRepId);
+    }
+
+    // 4. Tier Filter
+    if (activeFilters.tier && activeFilters.tier.length > 0) {
+      const tierSet = new Set(activeFilters.tier);
+      result = result.filter(
+        (q) => tierSet.has(q.customerTier?.code) || tierSet.has(q.customerTier?.name)
+      );
+    }
+
+    // 5. Anomaly / Violation Filter
+    if (activeFilters.anomaly === "LOW_MARGIN") {
+      result = result.filter((q) => Number(q.marginPercent) < 15);
+    } else if (activeFilters.anomaly === "CEILING_BREACH") {
+      result = result.filter((q) => Number(q.worstLineOverage) > 0);
+    }
+
+    return result;
+  }, [quotations, searchTerm, activeFilters, btreeIndex]);
+
+  // Multi-select helpers
+  const handleToggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAll = (visibleIds) => {
+    setSelectedIds((prev) => {
+      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
+      const next = new Set(prev);
+      if (allSelected) {
+        visibleIds.forEach((id) => next.delete(id));
+      } else {
+        visibleIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const handleClearSelection = () => {
+    setSelectedIds(new Set());
+  };
+
+  const handleSelectAllVisible = () => {
+    const all = new Set(filteredQuotations.map((q) => q.id));
+    setSelectedIds(all);
+  };
+
+  // CSV Export Action
+  const handleExportSelected = () => {
+    const selectedRows = filteredQuotations.filter((q) => selectedIds.has(q.id));
+    if (selectedRows.length === 0) return;
+
+    exportToCSV(
+      selectedRows,
+      [
+        { key: "quotationNumber", label: "Quotation #" },
+        { key: "customer", label: "Customer Name", formatter: (_, r) => r.customer?.name || "" },
+        { key: "email", label: "Customer Email", formatter: (_, r) => r.customer?.contactEmail || "" },
+        { key: "salesRep", label: "Sales Rep", formatter: (_, r) => r.salesRep?.fullName || "Unassigned" },
+        { key: "tier", label: "Tier", formatter: (_, r) => r.customerTier?.code || "" },
+        { key: "status", label: "Status" },
+        { key: "grandTotal", label: "Grand Total (₹)", formatter: (v) => Number(v).toFixed(2) },
+        { key: "marginPercent", label: "Margin %", formatter: (v) => `${Number(v).toFixed(1)}%` },
+        { key: "worstLineOverage", label: "Worst Overage", formatter: (v) => Number(v).toFixed(1) },
+        { key: "createdAt", label: "Date", formatter: (v) => new Date(v).toISOString().split("T")[0] },
+      ],
+      `quotations_export_${new Date().toISOString().split("T")[0]}.csv`
+    );
+  };
 
   const statusColors = {
     DRAFT: "gray",
@@ -80,13 +201,65 @@ export default function QuotationsPage() {
     BRONZE: "gray",
   };
 
+  // Control Panel Filter Groups
+  const filterGroups = [
+    {
+      label: "Status",
+      key: "status",
+      options: [
+        { label: "Draft", value: "DRAFT" },
+        { label: "Pending Approval", value: "PENDING_APPROVAL" },
+        { label: "Approved", value: "APPROVED" },
+        { label: "Sent to Customer", value: "SENT" },
+        { label: "Under Negotiation", value: "UNDER_NEGOTIATION" },
+        { label: "Confirmed", value: "CONFIRMED" },
+        { label: "Rejected", value: "REJECTED" },
+      ],
+    },
+    {
+      label: "Customer Tier",
+      key: "tier",
+      options: [
+        { label: "Gold", value: "GOLD" },
+        { label: "Silver", value: "SILVER" },
+        { label: "Bronze", value: "BRONZE" },
+      ],
+    },
+    {
+      label: "Governance Health",
+      key: "anomaly",
+      options: [
+        { label: "Low Margin (< 15%)", value: "LOW_MARGIN" },
+        { label: "Ceiling Breached (> 0 pts)", value: "CEILING_BREACH" },
+      ],
+    },
+  ];
+
+  if (isManagerOrAdmin && salesReps.length > 0) {
+    filterGroups.push({
+      label: "Sales Rep",
+      key: "salesRepId",
+      options: salesReps.map((rep) => ({
+        label: rep.fullName || rep.email,
+        value: rep.id,
+      })),
+    });
+  }
+
+  const groupByOptions = [
+    { label: "Status", value: "status" },
+    { label: "Customer", value: "customer.name" },
+    { label: "Sales Rep", value: "salesRep.fullName" },
+    { label: "Customer Tier", value: "customerTier.code" },
+  ];
+
   return (
     <div className="min-h-screen bg-[#F8F9FA] flex flex-col">
       {/* Top Navigation */}
-      <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-10">
+      <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-3">
           <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-[6px] bg-[#714B67] text-white flex items-center justify-center font-bold text-xs">
+            <div className="w-8 h-8 rounded-[6px] bg-[#714B67] text-white flex items-center justify-center font-bold text-xs shadow-xs">
               DF
             </div>
             <span className="font-bold text-base text-[#212529]">
@@ -104,7 +277,7 @@ export default function QuotationsPage() {
             {user?.role || "User"}
           </span>
           <Link href="/quotations/new">
-            <Button variant="primary" size="sm" className="font-semibold">
+            <Button variant="primary" size="sm" className="font-semibold shadow-xs">
               + New Quotation
             </Button>
           </Link>
@@ -112,8 +285,8 @@ export default function QuotationsPage() {
       </header>
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
-        {/* Header Title & Actions */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-4">
+        {/* Header Title & Refresh */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-[#212529]">
@@ -126,59 +299,58 @@ export default function QuotationsPage() {
             </p>
           </div>
 
-          {/* Filter Bar */}
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Sales Rep Filter (Visible to Managers & Admins) */}
-            {isManagerOrAdmin && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
-                  Rep:
-                </span>
-                <select
-                  value={repFilter}
-                  onChange={(e) => setRepFilter(e.target.value)}
-                  className="h-9 px-3 text-xs bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] outline-none focus:border-[#714B67] transition-all cursor-pointer"
-                >
-                  <option value="">All Sales Reps</option>
-                  {salesReps.map((rep) => (
-                    <option key={rep.id} value={rep.id}>
-                      {rep.fullName || rep.email}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
-                Status:
-              </span>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="h-9 px-3 text-xs bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] outline-none focus:border-[#714B67] transition-all cursor-pointer"
-              >
-                <option value="">All Statuses</option>
-                <option value="DRAFT">Draft</option>
-                <option value="PENDING_APPROVAL">Pending Approval</option>
-                <option value="APPROVED">Approved</option>
-                <option value="SENT">Sent to Customer</option>
-                <option value="UNDER_NEGOTIATION">Under Negotiation</option>
-                <option value="CONFIRMED">Confirmed</option>
-                <option value="REJECTED">Rejected</option>
-              </select>
-            </div>
-
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={fetchQuotations}
-              className="text-xs"
-            >
-              Refresh
-            </Button>
-          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={fetchQuotations}
+            className="text-xs self-start sm:self-auto"
+          >
+            ↻ Refresh Data
+          </Button>
         </div>
+
+        {/* Odoo Enterprise Control Panel (Search, Filters, Group By) */}
+        <OdooControlPanel
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          placeholder="Search by quote #, customer, sales rep, or status (B-Tree indexed)..."
+          filterGroups={filterGroups}
+          activeFilters={activeFilters}
+          onFilterChange={(key, val) =>
+            setActiveFilters((prev) => ({ ...prev, [key]: val }))
+          }
+          groupByOptions={groupByOptions}
+          activeGroupBy={activeGroupBy}
+          onGroupByChange={setActiveGroupBy}
+          totalCount={quotations.length}
+          filteredCount={filteredQuotations.length}
+          onResetAll={() => {
+            setSearchTerm("");
+            setActiveFilters({
+              status: [],
+              salesRepId: "",
+              tier: [],
+              anomaly: "",
+            });
+            setActiveGroupBy("");
+          }}
+        />
+
+        {/* Batch Action Bar (Appears when 1+ checkboxes selected) */}
+        <BatchActionBar
+          selectedCount={selectedIds.size}
+          totalCount={filteredQuotations.length}
+          onSelectAll={handleSelectAllVisible}
+          onClearSelection={handleClearSelection}
+          actions={[
+            {
+              label: "Export Selected (CSV)",
+              icon: "📥",
+              onClick: handleExportSelected,
+              variant: "secondary",
+            },
+          ]}
+        />
 
         {error && (
           <div className="p-3 text-xs bg-[#DC3545]/10 border border-[#DC3545]/30 text-[#DC3545] rounded-[6px]">
@@ -186,57 +358,71 @@ export default function QuotationsPage() {
           </div>
         )}
 
-        {/* Data Table */}
+        {/* Table View */}
         {loading ? (
-          <div className="py-16 text-center">
+          <div className="py-20 text-center">
             <div className="w-8 h-8 border-3 border-[#714B67] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
             <p className="text-xs text-[#6C757D]">Loading quotations...</p>
           </div>
-        ) : quotations.length === 0 ? (
-          <Card className="py-12 text-center">
-            <div className="w-12 h-12 rounded-full bg-[#F3EEF2] text-[#714B67] flex items-center justify-center mx-auto mb-3 font-bold text-lg">
-              📄
-            </div>
-            <h3 className="text-base font-semibold text-[#212529]">
-              No quotations found
-            </h3>
-            <p className="text-xs text-[#6C757D] max-w-sm mx-auto mt-1 mb-4">
-              {user?.role === "SALES_REP"
-                ? "You have not authored any quotations matching these filters."
-                : "No quotations matching the selected filter criteria."}
-            </p>
-            <Link href="/quotations/new">
-              <Button variant="primary" size="sm">
-                + Create Quotation
-              </Button>
-            </Link>
-          </Card>
         ) : (
-          <Table
+          <GroupedTable
             headers={[
-              "Quote Number",
-              "Customer",
-              "Sales Rep",
-              "Customer Tier",
-              "Status",
-              "Lines",
-              "Grand Total",
-              "Margin",
-              "Worst Overage",
-              "Created At",
+              { label: "Quote Number", key: "quotationNumber", className: "w-36" },
+              { label: "Customer", key: "customer.name" },
+              { label: "Sales Rep", key: "salesRep.fullName" },
+              { label: "Customer Tier", key: "customerTier.code", className: "w-28" },
+              { label: "Status", key: "status", className: "w-36" },
+              { label: "Lines", key: "_count.lines", className: "w-20 text-center" },
+              { label: "Grand Total", key: "grandTotal", className: "w-32" },
+              { label: "Margin", key: "marginPercent", className: "w-24" },
+              { label: "Worst Overage", key: "worstLineOverage", className: "w-28" },
+              { label: "Last Activity", key: "lastActivityAt", className: "w-28" },
             ]}
-          >
-            {quotations.map((q) => (
+            data={filteredQuotations}
+            getId={(q) => q.id}
+            selectedIds={selectedIds}
+            onToggleSelect={handleToggleSelect}
+            onToggleSelectAll={handleToggleSelectAll}
+            groupBy={activeGroupBy}
+            aggregateCols={[
+              {
+                key: "grandTotal",
+                label: "Sum",
+                type: "sum",
+                formatter: (val) => `₹${Number(val).toLocaleString()}`,
+              },
+              {
+                key: "marginPercent",
+                label: "Avg Margin",
+                type: "avg",
+                formatter: (val) => `${Number(val).toFixed(1)}%`,
+              },
+            ]}
+            emptyMessage="No quotations found matching your search and filter criteria."
+            renderRow={(q, isSelected, toggleSelect) => (
               <tr
                 key={q.id}
                 onClick={() => router.push(`/quotations/${q.id}`)}
-                className="hover:bg-[#F8F9FA] transition-colors cursor-pointer"
+                className={`hover:bg-[#F8F9FA] transition-colors cursor-pointer ${
+                  isSelected ? "bg-[#714B67]/5" : ""
+                }`}
               >
-                <td className="py-3 px-4 font-semibold text-[#714B67]">
+                <td
+                  className="py-3 px-3 text-center"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={toggleSelect}
+                    className="w-4 h-4 accent-[#714B67] rounded cursor-pointer"
+                  />
+                </td>
+                <td className="py-3 px-4 font-bold text-[#714B67]">
                   {q.quotationNumber}
                 </td>
                 <td className="py-3 px-4">
-                  <div className="font-medium text-[#212529]">
+                  <div className="font-semibold text-[#212529]">
                     {q.customer?.name}
                   </div>
                   <div className="text-[11px] text-[#6C757D]">
@@ -267,15 +453,15 @@ export default function QuotationsPage() {
                     {q.status}
                   </Badge>
                 </td>
-                <td className="py-3 px-4 text-xs text-[#6C757D]">
-                  {q._count?.lines || 0} items
+                <td className="py-3 px-4 text-xs text-[#6C757D] text-center font-medium">
+                  {q._count?.lines || q.lines?.length || 0}
                 </td>
-                <td className="py-3 px-4 font-semibold text-[#212529]">
+                <td className="py-3 px-4 font-bold text-[#212529]">
                   ₹{Number(q.grandTotal).toLocaleString()}
                 </td>
                 <td className="py-3 px-4">
                   <span
-                    className={`font-semibold text-xs ${
+                    className={`font-bold text-xs ${
                       Number(q.marginPercent) < 15
                         ? "text-[#DC3545]"
                         : "text-[#28A745]"
@@ -299,8 +485,8 @@ export default function QuotationsPage() {
                   {new Date(q.lastActivityAt || q.createdAt).toLocaleDateString()}
                 </td>
               </tr>
-            ))}
-          </Table>
+            )}
+          />
         )}
       </main>
     </div>

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "../../../context/AuthContext.js";
 import apiClient from "../../../lib/apiClient.js";
 import { Button, Input, Card, Badge, Table } from "../../../components/ui/index.js";
+import { BTreeSearchIndex } from "../../../lib/btree.js";
 
 export default function NewQuotationPage() {
   const router = useRouter();
@@ -130,6 +131,85 @@ export default function NewQuotationPage() {
 
   const handleRemoveLine = (index) => {
     setLines((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Multi-Product Checkbox Modal State
+  const [showProductModal, setShowProductModal] = useState(false);
+  const [modalSearchTerm, setModalSearchTerm] = useState("");
+  const [modalCategoryFilter, setModalCategoryFilter] = useState("");
+  const [selectedProductIds, setSelectedProductIds] = useState(new Set());
+
+  // B-Tree search index on catalog products
+  const productBTreeIndex = useMemo(() => {
+    const index = new BTreeSearchIndex({ degree: 3 });
+    products.forEach((p) => {
+      index.insertRecord(p.id, {
+        sku: p.sku || "",
+        name: p.name || "",
+        category: p.category?.name || "",
+        type: p.productType || "",
+        description: p.description || "",
+      });
+    });
+    return index;
+  }, [products]);
+
+  const modalProducts = useMemo(() => {
+    let list = products;
+    if (modalSearchTerm.trim()) {
+      const matchIds = productBTreeIndex.query(modalSearchTerm.trim());
+      list = list.filter((p) => matchIds.has(p.id));
+    }
+    if (modalCategoryFilter) {
+      list = list.filter(
+        (p) => p.categoryId === modalCategoryFilter || p.category?.name === modalCategoryFilter
+      );
+    }
+    return list;
+  }, [products, modalSearchTerm, modalCategoryFilter, productBTreeIndex]);
+
+  const handleToggleProductSelection = (id) => {
+    setSelectedProductIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAllModal = () => {
+    if (selectedProductIds.size === modalProducts.length) {
+      setSelectedProductIds(new Set());
+    } else {
+      setSelectedProductIds(new Set(modalProducts.map((p) => p.id)));
+    }
+  };
+
+  const handleAddSelectedProductsToQuote = () => {
+    if (selectedProductIds.size === 0) return;
+    const newItems = Array.from(selectedProductIds).map((pId) => ({
+      productId: pId,
+      quantity: 1,
+      discountPercent: 0,
+    }));
+
+    setLines((prev) => {
+      const isPristineDefault =
+        prev.length === 1 &&
+        prev[0].quantity === 1 &&
+        prev[0].discountPercent === 0 &&
+        products[0] &&
+        prev[0].productId === products[0].id;
+
+      if (isPristineDefault) {
+        return newItems;
+      }
+      return [...prev, ...newItems];
+    });
+
+    setSelectedProductIds(new Set());
+    setShowProductModal(false);
+    setModalSearchTerm("");
   };
 
   // Live client-side calculation of line math and order totals using Strictest Limit Algorithm (PDF §2.4)
@@ -392,14 +472,26 @@ export default function NewQuotationPage() {
               title="2. Quotation Line Items"
               subtitle="Mix hardware, services, and subscriptions with line-level discount discipline"
               action={
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleAddLine}
-                  className="text-xs"
-                >
-                  + Add Line Item
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    onClick={() => setShowProductModal(true)}
+                    className="text-xs font-semibold shadow-xs"
+                  >
+                    🔍 + Select Multiple Products
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleAddLine}
+                    className="text-xs"
+                  >
+                    + Add Single Line
+                  </Button>
+                </div>
               }
             >
               <div className="space-y-4">
@@ -623,6 +715,167 @@ export default function NewQuotationPage() {
             </Card>
           </div>
         </div>
+
+        {/* B-Tree Multi-Product Selection Modal */}
+        {showProductModal && (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-[10px] shadow-2xl border border-[#CED4DA] w-full max-w-4xl max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
+              {/* Modal Header */}
+              <div className="px-6 py-4 border-b border-[#E9ECEF] flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-[#212529] flex items-center gap-2">
+                    <span>Select Products for Quotation</span>
+                    <span className="text-xs bg-[#714B67]/10 text-[#714B67] px-2 py-0.5 rounded font-mono font-medium">
+                      B-Tree Fast Search
+                    </span>
+                  </h2>
+                  <p className="text-xs text-[#6C757D] mt-0.5">
+                    Select multiple products with checkboxes to add them in batch to this quotation.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowProductModal(false)}
+                  className="text-[#6C757D] hover:text-[#212529] text-xl font-bold w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#F8F9FA] transition-colors cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Modal Search & Filter Bar */}
+              <div className="px-6 py-3 bg-[#F8F9FA] border-b border-[#E9ECEF] flex flex-col sm:flex-row items-center gap-3">
+                <div className="relative flex-1 w-full">
+                  <input
+                    type="text"
+                    value={modalSearchTerm}
+                    onChange={(e) => setModalSearchTerm(e.target.value)}
+                    placeholder="Search by SKU, product name, type, or specs..."
+                    className="w-full h-9 pl-8 pr-3 text-xs bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] outline-none focus:border-[#714B67]"
+                  />
+                  <span className="absolute left-2.5 top-2.5 text-xs text-[#6C757D]">🔍</span>
+                </div>
+                <select
+                  value={modalCategoryFilter}
+                  onChange={(e) => setModalCategoryFilter(e.target.value)}
+                  className="h-9 px-3 text-xs bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] outline-none focus:border-[#714B67] cursor-pointer"
+                >
+                  <option value="">All Categories</option>
+                  {Array.from(new Set(products.map((p) => p.category?.name).filter(Boolean))).map((catName) => (
+                    <option key={catName} value={catName}>
+                      {catName}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleToggleSelectAllModal}
+                  className="text-xs text-[#714B67] hover:underline font-semibold whitespace-nowrap cursor-pointer"
+                >
+                  {selectedProductIds.size === modalProducts.length && modalProducts.length > 0
+                    ? "Deselect All"
+                    : `Select All (${modalProducts.length})`}
+                </button>
+              </div>
+
+              {/* Products Table */}
+              <div className="flex-1 overflow-y-auto p-4">
+                {modalProducts.length === 0 ? (
+                  <div className="py-12 text-center text-xs text-[#6C757D]">
+                    No products matching "{modalSearchTerm}".
+                  </div>
+                ) : (
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-[#F8F9FA] border-b border-[#E9ECEF] text-[#495057] font-semibold uppercase">
+                        <th className="py-2 px-3 w-10 text-center">
+                          <input
+                            type="checkbox"
+                            checked={
+                              modalProducts.length > 0 &&
+                              modalProducts.every((p) => selectedProductIds.has(p.id))
+                            }
+                            onChange={handleToggleSelectAllModal}
+                            className="w-4 h-4 accent-[#714B67] rounded cursor-pointer"
+                          />
+                        </th>
+                        <th className="py-2 px-3 w-32">SKU</th>
+                        <th className="py-2 px-3">Product Name</th>
+                        <th className="py-2 px-3 w-28">Category</th>
+                        <th className="py-2 px-3 w-28">Type</th>
+                        <th className="py-2 px-3 w-28 text-right">Base Price</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E9ECEF]">
+                      {modalProducts.map((p) => {
+                        const isSelected = selectedProductIds.has(p.id);
+                        return (
+                          <tr
+                            key={p.id}
+                            onClick={() => handleToggleProductSelection(p.id)}
+                            className={`hover:bg-[#F8F9FA] transition-colors cursor-pointer ${
+                              isSelected ? "bg-[#714B67]/5" : ""
+                            }`}
+                          >
+                            <td
+                              className="py-2.5 px-3 text-center"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => handleToggleProductSelection(p.id)}
+                                className="w-4 h-4 accent-[#714B67] rounded cursor-pointer"
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-bold text-[#714B67]">{p.sku}</td>
+                            <td className="py-2.5 px-3 font-semibold text-[#212529]">{p.name}</td>
+                            <td className="py-2.5 px-3 text-[#6C757D]">{p.category?.name || "—"}</td>
+                            <td className="py-2.5 px-3">
+                              <Badge variant="neutral" size="sm">
+                                {p.productType}
+                              </Badge>
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-bold text-[#212529]">
+                              ₹{Number(p.basePrice).toLocaleString()}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-6 py-3 bg-[#F8F9FA] border-t border-[#E9ECEF] flex items-center justify-between">
+                <div className="text-xs font-semibold text-[#495057]">
+                  <span className="text-[#714B67] font-bold text-sm">{selectedProductIds.size}</span>{" "}
+                  product(s) selected
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setShowProductModal(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    disabled={selectedProductIds.size === 0}
+                    onClick={handleAddSelectedProductsToQuote}
+                    className="font-semibold shadow-xs"
+                  >
+                    + Add Selected ({selectedProductIds.size}) to Quotation
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

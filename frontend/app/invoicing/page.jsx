@@ -1,8 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import apiClient from '../../lib/apiClient.js';
+import { OdooControlPanel } from '../../components/ui/OdooControlPanel.jsx';
+import { GroupedTable } from '../../components/ui/GroupedTable.jsx';
+import { BatchActionBar } from '../../components/ui/BatchActionBar.jsx';
+import { BTreeSearchIndex } from '../../lib/btree.js';
+import { exportToCSV } from '../../lib/exportCsv.js';
 
 /**
  * DealFlow360 — Invoicing & Payment Management Screen (Feature 3 / §9 Step 8)
@@ -14,6 +19,7 @@ import apiClient from '../../lib/apiClient.js';
  * - Real-time financial summary KPIs (Invoiced, Collected, Outstanding)
  * - Interactive payment recording modal with real-time status projection
  *   (DRAFT -> POSTED -> PARTIALLY_PAID -> PAID)
+ * - B-Tree fast indexing, OdooControlPanel, Group By, Checkboxes, and CSV Export
  */
 
 export default function InvoicingDashboardPage() {
@@ -32,10 +38,16 @@ export default function InvoicingDashboardPage() {
   const [error, setError] = useState(null);
   const [notification, setNotification] = useState(null);
 
-  // Filtering state
-  const [statusFilter, setStatusFilter] = useState('ALL');
-  const [typeFilter, setTypeFilter] = useState('ALL');
+  // Search, Filter & Group By State
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilters, setActiveFilters] = useState({
+    status: [],
+    invoiceType: [],
+  });
+  const [activeGroupBy, setActiveGroupBy] = useState('');
+
+  // Multi-Select Checkboxes State
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   // Payment Modal state
   const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState(null);
@@ -80,14 +92,8 @@ export default function InvoicingDashboardPage() {
       setLoading(true);
       setError(null);
 
-      // Build query string based on active filters
-      const params = new URLSearchParams();
-      if (statusFilter !== 'ALL') params.append('status', statusFilter);
-      if (typeFilter !== 'ALL') params.append('type', typeFilter);
-
-      const endpoint = `/invoices${params.toString() ? `?${params.toString()}` : ''}`;
       const [invoiceData, ordersData] = await Promise.all([
-        apiClient.get(endpoint),
+        apiClient.get('/invoices'),
         apiClient.get('/orders').catch(() => ({ orders: [] })),
       ]);
 
@@ -108,9 +114,9 @@ export default function InvoicingDashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, typeFilter]);
+  }, []);
 
-  // Load invoices on component mount or filter change
+  // Load invoices on component mount
   useEffect(() => {
     fetchInvoices();
   }, [fetchInvoices]);
@@ -238,16 +244,242 @@ export default function InvoicingDashboardPage() {
     }
   };
 
-  // Filter invoices by search query (Invoice #, Customer Name, or Order #)
-  const filteredInvoices = invoices.filter((inv) => {
-    if (!searchQuery.trim()) return true;
-    const query = searchQuery.toLowerCase();
-    return (
-      inv.invoiceNumber?.toLowerCase().includes(query) ||
-      inv.customerName?.toLowerCase().includes(query) ||
-      inv.orderNumber?.toLowerCase().includes(query)
+  // B-Tree Search Index
+  const btreeIndex = useMemo(() => {
+    const index = new BTreeSearchIndex();
+    invoices.forEach((inv) => {
+      index.insertRecord(inv.id, {
+        invoiceNumber: inv.invoiceNumber || '',
+        customer: inv.customerName || '',
+        order: inv.orderNumber || '',
+        status: inv.status || '',
+        invoiceType: inv.invoiceType || '',
+      });
+    });
+    return index;
+  }, [invoices]);
+
+  // Filter invoices by B-Tree search query and active filters
+  const filteredInvoices = useMemo(() => {
+    let result = invoices;
+
+    if (searchQuery.trim()) {
+      const matchIds = btreeIndex.query(searchQuery.trim());
+      result = result.filter((inv) => matchIds.has(inv.id));
+    }
+
+    if (activeFilters.status && activeFilters.status.length > 0) {
+      const set = new Set(activeFilters.status);
+      result = result.filter((inv) => set.has(inv.status));
+    }
+
+    if (activeFilters.invoiceType && activeFilters.invoiceType.length > 0) {
+      const set = new Set(activeFilters.invoiceType);
+      result = result.filter((inv) => set.has(inv.invoiceType));
+    }
+
+    return result;
+  }, [invoices, searchQuery, activeFilters, btreeIndex]);
+
+  // Selection Handlers
+  const handleToggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAll = (visibleIds) => {
+    setSelectedIds((prev) => {
+      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
+      const next = new Set(prev);
+      if (allSelected) {
+        visibleIds.forEach((id) => next.delete(id));
+      } else {
+        visibleIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  // Batch CSV Export
+  const handleExportSelected = () => {
+    const selectedRows = filteredInvoices.filter((inv) => selectedIds.has(inv.id));
+    if (selectedRows.length === 0) return;
+
+    exportToCSV(
+      selectedRows,
+      [
+        { key: 'invoiceNumber', label: 'Invoice #' },
+        { key: 'customerName', label: 'Customer' },
+        { key: 'orderNumber', label: 'Order #' },
+        { key: 'invoiceType', label: 'Type', formatter: (v) => (v === 'ONE_TIME' ? 'One-Time Sale' : 'Subscription') },
+        { key: 'status', label: 'Status' },
+        { key: 'totalAmount', label: 'Total Amount (₹)', formatter: (v) => Number(v || 0).toFixed(2) },
+        { key: 'amountPaid', label: 'Amount Paid (₹)', formatter: (v) => Number(v || 0).toFixed(2) },
+        { key: 'balanceDue', label: 'Balance Due (₹)', formatter: (v) => Number(v || 0).toFixed(2) },
+        { key: 'dueDate', label: 'Due Date', formatter: (v) => (v ? new Date(v).toISOString().split('T')[0] : '') },
+      ],
+      `invoices_export_${new Date().toISOString().split('T')[0]}.csv`
     );
-  });
+  };
+
+  // Batch Post Draft Invoices
+  const handleBatchPostInvoices = async () => {
+    const selectedDrafts = filteredInvoices.filter(
+      (inv) => selectedIds.has(inv.id) && inv.status === 'DRAFT'
+    );
+    if (selectedDrafts.length === 0) return;
+    if (!confirm(`Post ${selectedDrafts.length} draft invoice(s) for collection?`)) return;
+
+    try {
+      setError(null);
+      for (const inv of selectedDrafts) {
+        await apiClient.post(`/invoices/${inv.id}/post`, {});
+      }
+      setNotification({
+        type: 'success',
+        message: `Successfully posted ${selectedDrafts.length} invoice(s) for collection!`,
+      });
+      setSelectedIds(new Set());
+      await fetchInvoices();
+    } catch (err) {
+      setError(err.message || 'Failed to post selected invoices');
+    }
+  };
+
+  const draftCount = useMemo(() => {
+    return filteredInvoices.filter(
+      (inv) => selectedIds.has(inv.id) && inv.status === 'DRAFT'
+    ).length;
+  }, [filteredInvoices, selectedIds]);
+
+  // Control Panel Options
+  const filterGroups = [
+    {
+      label: 'Invoice Status',
+      key: 'status',
+      options: [
+        { label: 'Draft', value: 'DRAFT' },
+        { label: 'Posted / Unpaid', value: 'POSTED' },
+        { label: 'Partially Paid', value: 'PARTIALLY_PAID' },
+        { label: 'Paid', value: 'PAID' },
+        { label: 'Cancelled', value: 'CANCELLED' },
+      ],
+    },
+    {
+      label: 'Invoice Type',
+      key: 'invoiceType',
+      options: [
+        { label: 'One-Time Sale', value: 'ONE_TIME' },
+        { label: 'Subscription Schedule', value: 'RECURRING' },
+      ],
+    },
+  ];
+
+  const groupByOptions = [
+    { label: 'Invoice Status', value: 'status' },
+    { label: 'Invoice Type', value: 'invoiceType' },
+    { label: 'None', value: '' },
+  ];
+
+  const tableHeaders = [
+    { label: 'Invoice Number', key: 'invoiceNumber' },
+    { label: 'Customer & Order', key: 'customerName' },
+    { label: 'Type', key: 'invoiceType' },
+    { label: 'Status', key: 'status' },
+    { label: 'Total Amount', key: 'totalAmount', className: 'text-right' },
+    { label: 'Amount Paid', key: 'amountPaid', className: 'text-right' },
+    { label: 'Balance Due', key: 'balanceDue', className: 'text-right' },
+    { label: 'Actions', key: 'actions', className: 'text-center' },
+  ];
+
+  const renderInvoiceRow = (inv, isSelected, toggleSelect) => (
+    <tr
+      key={inv.id}
+      className={`hover:bg-[#F8F9FA] transition ${
+        isSelected ? 'bg-purple-50/50' : ''
+      }`}
+    >
+      <td className="py-3 px-3 text-center">
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={toggleSelect}
+          className="w-4 h-4 accent-[#714B67] rounded cursor-pointer"
+        />
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap">
+        <div
+          className="font-semibold text-[#714B67] hover:underline cursor-pointer"
+          onClick={() => handleViewInvoiceDetail(inv.id)}
+        >
+          {inv.invoiceNumber}
+        </div>
+        <div className="text-xs text-gray-500">
+          Due: {formatDate(inv.dueDate)}
+        </div>
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap">
+        <div className="font-medium text-gray-900">{inv.customerName}</div>
+        <div className="text-xs text-gray-500">
+          Order: <span className="font-mono">{inv.orderNumber}</span>
+        </div>
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap">
+        <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
+          {inv.invoiceType === 'ONE_TIME' ? 'One-Time Sale' : 'Subscription'}
+        </span>
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap">
+        {renderStatusBadge(inv.status)}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-right font-medium text-gray-900">
+        {formatCurrency(inv.totalAmount)}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-right font-medium text-emerald-600">
+        {formatCurrency(inv.amountPaid)}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-right font-bold text-gray-900">
+        {inv.balanceDue > 0 ? (
+          <span className="text-amber-600">{formatCurrency(inv.balanceDue)}</span>
+        ) : (
+          <span className="text-gray-400">₹0.00</span>
+        )}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-center space-x-2">
+        {inv.status === 'DRAFT' && (
+          <button
+            onClick={() => handlePostInvoice(inv.id, inv.invoiceNumber)}
+            className="inline-flex items-center px-2.5 py-1 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded transition shadow-sm"
+          >
+            Post Invoice
+          </button>
+        )}
+        {(inv.status === 'POSTED' || inv.status === 'PARTIALLY_PAID') && (
+          <button
+            onClick={() => openPaymentModal(inv)}
+            className="inline-flex items-center px-3 py-1 text-xs font-semibold text-white bg-[#714B67] hover:bg-[#5c3d54] rounded transition shadow-sm"
+          >
+            Record Payment
+          </button>
+        )}
+        {inv.status === 'PAID' && (
+          <span className="text-xs text-emerald-600 font-semibold px-2 py-1 bg-emerald-50 rounded border border-emerald-200">
+            ✓ Settled
+          </span>
+        )}
+        <button
+          onClick={() => handleViewInvoiceDetail(inv.id)}
+          className="inline-flex items-center px-2.5 py-1 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition"
+        >
+          View
+        </button>
+      </td>
+    </tr>
+  );
 
   // Calculate projected new balance and status in Payment Modal
   const enteredAmountNum = parseFloat(paymentAmount) || 0;
@@ -506,197 +738,90 @@ export default function InvoicingDashboardPage() {
         )}
 
         {/* ================================================================== */}
-        {/* Table Controls & Filter Toolbar */}
+        {/* Odoo Control Panel: Search, Filters & Group By */}
         {/* ================================================================== */}
-        <div className="bg-white rounded-lg p-4 border border-gray-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-          {/* Search Field */}
-          <div className="w-full md:w-80 relative">
-            <input
-              type="text"
-              placeholder="Search by Invoice #, Order, Customer..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-white text-[#212529] border border-[#CED4DA] rounded-md text-sm placeholder:text-[#868E96] focus:outline-none focus:ring-1 focus:ring-[#714B67] focus:border-[#714B67]"
-            />
-            <svg
-              className="w-4 h-4 text-gray-400 absolute left-3 top-3"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </div>
-
-          {/* Filter Dropdowns */}
-          <div className="flex items-center space-x-3 w-full md:w-auto">
-            {/* Status Filter */}
-            <div className="flex items-center space-x-2">
-              <label className="text-xs font-medium text-gray-500">Status:</label>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="text-xs border border-[#CED4DA] rounded-md px-2.5 py-1.5 bg-white text-[#212529] focus:outline-none focus:ring-1 focus:ring-[#714B67]"
-              >
-                <option value="ALL">All Statuses</option>
-                <option value="DRAFT">Draft</option>
-                <option value="POSTED">Posted</option>
-                <option value="PARTIALLY_PAID">Partially Paid</option>
-                <option value="PAID">Paid</option>
-              </select>
-            </div>
-
-            {/* Type Filter */}
-            <div className="flex items-center space-x-2">
-              <label className="text-xs font-medium text-gray-500">Type:</label>
-              <select
-                value={typeFilter}
-                onChange={(e) => setTypeFilter(e.target.value)}
-                className="text-xs border border-[#CED4DA] rounded-md px-2.5 py-1.5 bg-white text-[#212529] focus:outline-none focus:ring-1 focus:ring-[#714B67]"
-              >
-                <option value="ALL">All Types</option>
-                <option value="ONE_TIME">One-Time Sale</option>
-                <option value="RECURRING">Subscription Schedule</option>
-              </select>
-            </div>
-          </div>
-        </div>
+        <OdooControlPanel
+          searchTerm={searchQuery}
+          onSearchChange={setSearchQuery}
+          placeholder="Search invoices by invoice #, customer, order # (B-Tree indexed)..."
+          filterGroups={filterGroups}
+          activeFilters={activeFilters}
+          onFilterChange={(key, val) => setActiveFilters((prev) => ({ ...prev, [key]: val }))}
+          groupByOptions={groupByOptions}
+          activeGroupBy={activeGroupBy}
+          onGroupByChange={setActiveGroupBy}
+          totalCount={invoices.length}
+          filteredCount={filteredInvoices.length}
+          onResetAll={() => {
+            setSearchQuery('');
+            setActiveFilters({ status: [], invoiceType: [] });
+            setActiveGroupBy('');
+          }}
+        />
 
         {/* ================================================================== */}
-        {/* Invoices List Table */}
+        {/* Batch Action Bar */}
         {/* ================================================================== */}
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-gray-900">
-              Customer Invoices ({filteredInvoices.length})
-            </h2>
-            <span className="text-xs text-gray-500">
-              PRD Spine: Step 8 Invoicing & Payment
-            </span>
+        <BatchActionBar
+          selectedCount={selectedIds.size}
+          totalCount={filteredInvoices.length}
+          onSelectAll={() => setSelectedIds(new Set(filteredInvoices.map((inv) => inv.id)))}
+          onClearSelection={() => setSelectedIds(new Set())}
+          actions={[
+            {
+              label: 'Export Selected (CSV)',
+              icon: '📥',
+              onClick: handleExportSelected,
+              variant: 'secondary',
+            },
+            ...(draftCount > 0
+              ? [
+                  {
+                    label: `Post Selected (${draftCount})`,
+                    icon: '✓',
+                    onClick: handleBatchPostInvoices,
+                    variant: 'primary',
+                  },
+                ]
+              : []),
+          ]}
+        />
+
+        {/* ================================================================== */}
+        {/* Grouped & Selectable Invoices Table */}
+        {/* ================================================================== */}
+        {loading ? (
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-12 text-center text-gray-500">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-[#714B67] border-t-transparent mb-3"></div>
+            <p className="text-sm">Loading invoices from database...</p>
           </div>
-
-          {loading ? (
-            <div className="p-12 text-center text-gray-500">
-              <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-[#714B67] border-t-transparent mb-3"></div>
-              <p className="text-sm">Loading invoices from database...</p>
-            </div>
-          ) : filteredInvoices.length === 0 ? (
-            <div className="p-12 text-center text-gray-500">
-              <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <h3 className="mt-2 text-sm font-medium text-gray-900">No invoices found</h3>
-              <p className="mt-1 text-xs text-gray-500">Try adjusting your filters or check back after confirming an order.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
-                <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  <tr>
-                    <th className="px-6 py-3">Invoice Number</th>
-                    <th className="px-6 py-3">Customer & Order</th>
-                    <th className="px-6 py-3">Type</th>
-                    <th className="px-6 py-3">Status</th>
-                    <th className="px-6 py-3 text-right">Total Amount</th>
-                    <th className="px-6 py-3 text-right">Amount Paid</th>
-                    <th className="px-6 py-3 text-right">Balance Due</th>
-                    <th className="px-6 py-3 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 bg-white">
-                  {filteredInvoices.map((inv) => (
-                    <tr key={inv.id} className="hover:bg-gray-50/80 transition">
-                      {/* Invoice Number & Date */}
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="font-semibold text-[#714B67] hover:underline cursor-pointer"
-                          onClick={() => handleViewInvoiceDetail(inv.id)}
-                        >
-                          {inv.invoiceNumber}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          Due: {formatDate(inv.dueDate)}
-                        </div>
-                      </td>
-
-                      {/* Customer & Order */}
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="font-medium text-gray-900">{inv.customerName}</div>
-                        <div className="text-xs text-gray-500">
-                          Order: <span className="font-mono">{inv.orderNumber}</span>
-                        </div>
-                      </td>
-
-                      {/* Invoice Type */}
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
-                          {inv.invoiceType === 'ONE_TIME' ? 'One-Time Sale' : 'Subscription'}
-                        </span>
-                      </td>
-
-                      {/* Status Badge */}
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {renderStatusBadge(inv.status)}
-                      </td>
-
-                      {/* Total Amount */}
-                      <td className="px-6 py-4 whitespace-nowrap text-right font-medium text-gray-900">
-                        {formatCurrency(inv.totalAmount)}
-                      </td>
-
-                      {/* Amount Paid */}
-                      <td className="px-6 py-4 whitespace-nowrap text-right font-medium text-emerald-600">
-                        {formatCurrency(inv.amountPaid)}
-                      </td>
-
-                      {/* Balance Due */}
-                      <td className="px-6 py-4 whitespace-nowrap text-right font-bold text-gray-900">
-                        {inv.balanceDue > 0 ? (
-                          <span className="text-amber-600">{formatCurrency(inv.balanceDue)}</span>
-                        ) : (
-                          <span className="text-gray-400">₹0.00</span>
-                        )}
-                      </td>
-
-                      {/* Action Buttons */}
-                      <td className="px-6 py-4 whitespace-nowrap text-center space-x-2">
-                        {inv.status === 'DRAFT' && (
-                          <button
-                            onClick={() => handlePostInvoice(inv.id, inv.invoiceNumber)}
-                            className="inline-flex items-center px-2.5 py-1 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded transition shadow-sm"
-                          >
-                            Post Invoice
-                          </button>
-                        )}
-
-                        {(inv.status === 'POSTED' || inv.status === 'PARTIALLY_PAID') && (
-                          <button
-                            onClick={() => openPaymentModal(inv)}
-                            className="inline-flex items-center px-3 py-1 text-xs font-semibold text-white bg-[#714B67] hover:bg-[#5c3d54] rounded transition shadow-sm"
-                          >
-                            Record Payment
-                          </button>
-                        )}
-
-                        {inv.status === 'PAID' && (
-                          <span className="text-xs text-emerald-600 font-semibold px-2 py-1 bg-emerald-50 rounded border border-emerald-200">
-                            ✓ Settled
-                          </span>
-                        )}
-
-                        <button
-                          onClick={() => handleViewInvoiceDetail(inv.id)}
-                          className="inline-flex items-center px-2.5 py-1 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition"
-                        >
-                          View
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        ) : (
+          <GroupedTable
+            headers={tableHeaders}
+            data={filteredInvoices}
+            getId={(inv) => inv.id}
+            selectedIds={selectedIds}
+            onToggleSelect={handleToggleSelect}
+            onToggleSelectAll={handleToggleSelectAll}
+            groupBy={activeGroupBy}
+            renderRow={renderInvoiceRow}
+            aggregateCols={[
+              {
+                key: 'totalAmount',
+                label: 'Total Invoiced',
+                type: 'sum',
+                formatter: (val) => formatCurrency(val),
+              },
+              {
+                key: 'balanceDue',
+                label: 'Total Due',
+                type: 'sum',
+                formatter: (val) => formatCurrency(val),
+              },
+            ]}
+            emptyMessage="No invoices found matching current search or filter criteria."
+          />
+        )}
       </main>
 
       {/* ==================================================================== */}
