@@ -348,8 +348,11 @@ export const approveStep = asyncHandler(async (req, res) => {
   }
 
   // 3. Verify Reviewer Role
+  const currentUserRoleCode = currentUser.role?.code || (typeof currentUser.role === 'string' ? currentUser.role : null);
   const hasRole =
-    currentUser.roleId === step.roleId || currentUser.role?.code === 'ADMIN';
+    currentUser.roleId === step.roleId ||
+    currentUserRoleCode === 'ADMIN' ||
+    currentUserRoleCode === step.role?.code;
   if (!hasRole) {
     throw new ApiError(
       403,
@@ -476,8 +479,11 @@ export const rejectStep = asyncHandler(async (req, res) => {
   }
 
   // Role check
+  const currentUserRoleCode = currentUser.role?.code || (typeof currentUser.role === 'string' ? currentUser.role : null);
   const hasRole =
-    currentUser.roleId === step.roleId || currentUser.role?.code === 'ADMIN';
+    currentUser.roleId === step.roleId ||
+    currentUserRoleCode === 'ADMIN' ||
+    currentUserRoleCode === step.role?.code;
   if (!hasRole) {
     throw new ApiError(
       403,
@@ -565,8 +571,11 @@ export const returnStep = asyncHandler(async (req, res) => {
     throw new ApiError(400, `Step is already in '${step.status}' state`);
   }
 
+  const currentUserRoleCode = currentUser.role?.code || (typeof currentUser.role === 'string' ? currentUser.role : null);
   const hasRole =
-    currentUser.roleId === step.roleId || currentUser.role?.code === 'ADMIN';
+    currentUser.roleId === step.roleId ||
+    currentUserRoleCode === 'ADMIN' ||
+    currentUserRoleCode === step.role?.code;
   if (!hasRole) {
     throw new ApiError(
       403,
@@ -665,7 +674,7 @@ export const getApprovalHistory = asyncHandler(async (req, res) => {
   return res.status(200).json(
     new ApiResponse(
       200,
-      { quotationId, cycles, auditLogs },
+      { quotationId, cycles, approvals: cycles, auditLogs },
       'Approval history retrieved successfully'
     )
   );

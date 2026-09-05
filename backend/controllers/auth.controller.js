@@ -78,6 +78,7 @@ const formatUser = (user) => ({
   fullName: user.fullName,
   isActive: user.isActive,
   role: user.role?.code || null,
+  roleId: user.roleId || user.role?.id || null,
   roleName: user.role?.name || null,
   createdAt: user.createdAt,
 });

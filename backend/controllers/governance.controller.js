@@ -374,7 +374,7 @@ export async function runQuotationEvaluation(quotationId) {
   const riskVerdict = calculateRiskScore(quotation, scoreVerdict);
 
   // 6. Select approval ladder steps with pure selectApprovalPolicySteps()
-  const routingVerdict = selectApprovalPolicySteps(activePolicy, scoreVerdict);
+  const routingVerdict = selectApprovalPolicySteps(activePolicy, scoreVerdict, riskVerdict);
 
   // 7. Persist evaluation verdict onto Quotation and QuotationLine in DB
   await prisma.$transaction(async (tx) => {

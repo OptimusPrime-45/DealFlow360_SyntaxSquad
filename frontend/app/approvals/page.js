@@ -75,11 +75,23 @@ export default function ApprovalsPage() {
     }
     setBusy(true);
     setError("");
+    setNotice("");
     try {
-      await apiClient.post(`/approvals/steps/${stepId}/${action}`, {
+      const res = await apiClient.post(`/approvals/steps/${stepId}/${action}`, {
         reason: reason.trim() || "Approved after review",
       });
-      setNotice(`Step ${action}d.`);
+      if (action === "approve") {
+        setNotice(
+          res.cycleCompleted
+            ? "Final approval granted! Quotation is now APPROVED and ready for customer acceptance."
+            : "Step approved! Quotation has been escalated to Finance for secondary authorization."
+        );
+      } else if (action === "reject") {
+        setNotice("Quotation rejected. Status changed to REJECTED (open for changes and negotiation).");
+      } else {
+        setNotice("Quotation returned to sales rep for revision.");
+      }
+      setReason("");
       await loadQueue();
       if (selected) await openQuotation(selected);
     } catch (err) {
@@ -90,7 +102,12 @@ export default function ApprovalsPage() {
   };
 
   // The cycle currently awaiting a decision.
-  const cycles = detail?.history?.approvals || detail?.history?.history || [];
+  const cycles =
+    detail?.history?.cycles ||
+    detail?.history?.approvals ||
+    detail?.history?.history ||
+    detail?.quotation?.approvals ||
+    [];
   const activeCycle =
     Array.isArray(cycles) ? cycles.find((c) => c.status === "PENDING") || cycles[0] : null;
   const findings = activeCycle?.findings;
@@ -252,41 +269,90 @@ export default function ApprovalsPage() {
                   />
 
                   <div className="space-y-2">
-                    {(activeCycle?.steps || []).map((s) => (
-                      <div
-                        key={s.id}
-                        className="flex items-center justify-between border border-[#E9ECEF] rounded-[6px] px-3 py-2"
-                      >
-                        <div>
-                          <div className="text-sm font-medium">
-                            Step {s.stepOrder} · {s.role?.name || s.role?.code}
+                    {(activeCycle?.steps || []).map((s) => {
+                      const userRoleCode = typeof user?.role === 'string' ? user.role : user?.role?.code;
+                      const isAuthor = user?.id === detail.quotation?.salesRepId;
+                      const isAuthorizedReviewer =
+                        (userRoleCode === "ADMIN" ||
+                          userRoleCode === s.role?.code ||
+                          (user?.roleId && user.roleId === s.roleId)) &&
+                        !isAuthor;
+
+                      return (
+                        <div
+                          key={s.id}
+                          className="flex flex-col sm:flex-row sm:items-center justify-between border border-[#E9ECEF] rounded-[6px] p-3 gap-2"
+                        >
+                          <div>
+                            <div className="text-sm font-semibold text-[#212529] flex items-center gap-2">
+                              <span>Step {s.stepOrder}: {s.role?.name || s.role?.code}</span>
+                              {s.status === "PENDING" && isAuthorizedReviewer && (
+                                <Badge variant="warning" size="sm">Your Action Required</Badge>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-[#6C757D] mt-0.5">
+                              {s.reviewer ? `Reviewed by ${s.reviewer.fullName}` : "Awaiting review"}
+                              {s.reason && ` — "${s.reason}"`}
+                            </div>
                           </div>
-                          {s.reason && (
-                            <div className="text-[11px] text-[#6C757D]">{s.reason}</div>
+
+                          {s.status === "PENDING" ? (
+                            isAuthorizedReviewer ? (
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  className="text-xs font-semibold"
+                                  disabled={busy}
+                                  onClick={() => act(s.id, "approve")}
+                                >
+                                  Approve
+                                </Button>
+                                <Button
+                                  variant="danger"
+                                  size="sm"
+                                  className="text-xs"
+                                  disabled={busy}
+                                  onClick={() => act(s.id, "reject")}
+                                >
+                                  Reject
+                                </Button>
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  className="text-xs"
+                                  disabled={busy}
+                                  onClick={() => act(s.id, "return")}
+                                >
+                                  Return
+                                </Button>
+                              </div>
+                            ) : isAuthor ? (
+                              <span className="text-xs text-[#DC3545] font-medium italic">
+                                Anti-self-approval rule in effect
+                              </span>
+                            ) : (
+                              <span className="text-xs text-[#6C757D] font-medium">
+                                Awaiting {s.role?.name || s.role?.code}
+                              </span>
+                            )
+                          ) : (
+                            <Badge
+                              variant={
+                                s.status === "APPROVED"
+                                  ? "success"
+                                  : s.status === "REJECTED"
+                                  ? "danger"
+                                  : "neutral"
+                              }
+                              size="sm"
+                            >
+                              {s.status}
+                            </Badge>
                           )}
                         </div>
-
-                        {s.status === "PENDING" ? (
-                          <div className="flex gap-2">
-                            <Button variant="primary" size="sm" className="text-xs" disabled={busy}
-                              onClick={() => act(s.id, "approve")}>Approve</Button>
-                            <Button variant="danger" size="sm" className="text-xs" disabled={busy}
-                              onClick={() => act(s.id, "reject")}>Reject</Button>
-                            <Button variant="secondary" size="sm" className="text-xs" disabled={busy}
-                              onClick={() => act(s.id, "return")}>Return</Button>
-                          </div>
-                        ) : (
-                          <Badge
-                            variant={
-                              s.status === "APPROVED" ? "success" : s.status === "REJECTED" ? "danger" : "neutral"
-                            }
-                            size="sm"
-                          >
-                            {s.status}
-                          </Badge>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   <Link href={`/quotations/${detail.quotation.id}`}>

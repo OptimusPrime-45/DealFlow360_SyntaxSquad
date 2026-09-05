@@ -223,7 +223,8 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
       UNDER_NEGOTIATION: { label: 'Under Negotiation', bg: 'bg-purple-100', text: 'text-purple-800' },
       PENDING_APPROVAL: { label: 'Pending Management Review', bg: 'bg-amber-100', text: 'text-amber-800' },
       APPROVED: { label: 'Approved Terms', bg: 'bg-emerald-100', text: 'text-emerald-800' },
-      CONFIRMED: { label: 'Order Confirmed', bg: 'bg-green-100', text: 'text-green-800' }
+      CONFIRMED: { label: 'Order Confirmed', bg: 'bg-green-100', text: 'text-green-800' },
+      REJECTED: { label: 'In Revision / Terms Review', bg: 'bg-rose-100', text: 'text-rose-800' }
     };
     const s = statusMap[status] || { label: status, bg: 'bg-gray-100', text: 'text-gray-800' };
     return (
