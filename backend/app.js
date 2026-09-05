@@ -1,6 +1,10 @@
 import express from "express";
 import cors from "cors";
 import authRouter from "./routes/auth.routes.js";
+import customerRouter from "./routes/customer.routes.js";
+import tierRouter from "./routes/tier.routes.js";
+import catalogRouter from "./routes/catalog.routes.js";
+import quotationRouter from "./routes/quotation.routes.js";
 import { errorHandler } from "./middleware/error.middleware.js";
 
 const app = express();
@@ -24,8 +28,12 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// Routes
+// Mount modular routes
 app.use("/api/auth", authRouter);
+app.use("/api/customers", customerRouter);
+app.use("/api/customer-tiers", tierRouter);
+app.use("/api/quotations", quotationRouter);
+app.use("/api", catalogRouter);
 
 // Global centralized error handler
 app.use(errorHandler);
