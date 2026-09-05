@@ -23,6 +23,19 @@ const updateTierSchema = z.object({
     .max(100, "Ceiling cannot exceed 100%"),
 });
 
+const createTierSchema = z.object({
+  code: z
+    .string()
+    .min(1, "Tier code is required")
+    .transform((v) => v.trim().toUpperCase()),
+  name: z.string().min(1, "Tier name is required"),
+  rank: z.number().int().default(0),
+  // Nullable on purpose: "no tier-level discretion" is a meaningful state, not
+  // a missing one. Leaving it null lets GovernanceSetting.unconfiguredCeilingPolicy
+  // decide, rather than defaulting a ceiling behind the admin's back.
+  maxDiscountPercent: z.number().min(0).max(100).nullable().optional(),
+});
+
 /**
  * Get all customers
  * GET /api/customers
@@ -226,6 +239,53 @@ export const updateCustomerTier = asyncHandler(async (req, res) => {
     );
 });
 
+/**
+ * Create a customer tier (§9 step 1 — "set up a discount tier").
+ * POST /api/customer-tiers
+ *
+ * maxDiscountPercent is nullable on purpose: a tier with no ceiling has no
+ * tier-level discretion, which leaves GovernanceSetting.unconfiguredCeilingPolicy
+ * to decide. Do not default it to a number here — the PRD forbids defaulting
+ * ceilings behind the admin's back.
+ */
+export const createCustomerTier = asyncHandler(async (req, res) => {
+  const input = createTierSchema.parse(req.body);
+
+  const existing = await prisma.customerTier.findUnique({
+    where: { code: input.code },
+  });
+  if (existing) {
+    throw new ApiError(409, `A tier with code ${input.code} already exists`);
+  }
+
+  const tier = await prisma.customerTier.create({ data: input });
+
+  return res
+    .status(201)
+    .json(new ApiResponse(201, { tier }, `Tier ${tier.name} created`));
+});
+
+/**
+ * DELETE /api/customer-tiers/:id
+ * Refused while customers still reference the tier — deleting it would leave
+ * their quotations with no ceiling to resolve against.
+ */
+export const deleteCustomerTier = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const inUse = await prisma.customer.count({ where: { customerTierId: id } });
+  if (inUse > 0) {
+    throw new ApiError(
+      409,
+      `${inUse} customer(s) are on this tier; reassign them before deleting it`
+    );
+  }
+
+  await prisma.customerTier.delete({ where: { id } });
+
+  return res.status(200).json(new ApiResponse(200, {}, "Customer tier deleted"));
+});
+
 export default {
   getCustomers,
   getCustomerById,
@@ -233,5 +293,7 @@ export default {
   updateCustomer,
   deleteCustomer,
   getCustomerTiers,
+  createCustomerTier,
   updateCustomerTier,
+  deleteCustomerTier,
 };

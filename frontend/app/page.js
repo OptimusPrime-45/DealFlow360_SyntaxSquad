@@ -115,6 +115,11 @@ export default function HomePage() {
               Catalog and Customer data active with live line math, ceiling resolution, and margin calculation.
             </p>
             <div className="flex items-center gap-2 mb-4">
+              <Link href="/admin">
+                <Button variant="secondary" size="sm" className="text-xs font-semibold mr-2">
+                  Go to Back-end
+                </Button>
+              </Link>
               <Link href="/approvals">
                 <Button variant="secondary" size="sm" className="text-xs font-semibold mr-2">
                   Approvals

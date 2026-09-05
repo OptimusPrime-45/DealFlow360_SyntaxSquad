@@ -124,7 +124,7 @@ export const createPolicy = asyncHandler(async (req, res) => {
     entityId: policy.id,
     action: 'APPROVAL_POLICY_CREATED',
     newValue: policy,
-    reason: req.body.reason || 'Admin created approval policy',
+    reason: req.body?.reason || 'Admin created approval policy',
   });
 
   return res.status(201).json(
@@ -174,7 +174,7 @@ export const createPolicyStep = asyncHandler(async (req, res) => {
     entityId: step.id,
     action: 'APPROVAL_POLICY_STEP_CREATED',
     newValue: step,
-    reason: req.body.reason || 'Admin added step to approval policy ladder',
+    reason: req.body?.reason || 'Admin added step to approval policy ladder',
   });
 
   return res.status(201).json(
@@ -212,7 +212,7 @@ export const updatePolicyStep = asyncHandler(async (req, res) => {
     action: 'APPROVAL_POLICY_STEP_UPDATED',
     oldValue: existingStep,
     newValue: updatedStep,
-    reason: req.body.reason || 'Admin updated approval policy step',
+    reason: req.body?.reason || 'Admin updated approval policy step',
   });
 
   return res.status(200).json(
@@ -246,7 +246,7 @@ export const deletePolicyStep = asyncHandler(async (req, res) => {
     entityId: stepId,
     action: 'APPROVAL_POLICY_STEP_DELETED',
     oldValue: existingStep,
-    reason: req.body.reason || 'Admin deleted approval policy step',
+    reason: req.body?.reason || 'Admin deleted approval policy step',
   });
 
   return res.status(200).json(

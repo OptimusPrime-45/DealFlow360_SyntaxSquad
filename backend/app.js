@@ -23,6 +23,8 @@ import catalogRoutes from "./routes/catalog.routes.js";
 import quotationRoutes from "./routes/quotation.routes.js";
 import warehouseRoutes from "./routes/warehouse.routes.js";
 import subscriptionPlanRoutes from "./routes/subscriptionPlan.routes.js";
+import upsellRuleRoutes from "./routes/upsellRule.routes.js";
+import priceListRoutes from "./routes/priceList.routes.js";
 
 // ── Track 2 · governance, approvals, audit ──────────────────────────────────
 import governanceRoutes from "./routes/governance.routes.js";
@@ -55,6 +57,15 @@ app.use(
   })
 );
 app.use(express.json());
+
+// express.json() only populates req.body when a JSON content-type is present,
+// so a DELETE sent without one leaves req.body undefined. Several handlers read
+// req.body.reason for the audit trail and were throwing 500 on delete. Normalise
+// once here rather than guarding every handler.
+app.use((req, res, next) => {
+  if (req.body === undefined || req.body === null) req.body = {};
+  next();
+});
 
 // ── Health check ────────────────────────────────────────────────────────────
 app.get("/api/health", (req, res) => {
@@ -90,6 +101,8 @@ app.post("/api/quotations/:id/portal-link", requireInternal, generatePortalLink)
 app.use("/api/quotations", quotationRoutes);
 app.use("/api/warehouses", warehouseRoutes);
 app.use("/api/subscription-plans", subscriptionPlanRoutes);
+app.use("/api/upsell-rules", upsellRuleRoutes);
+app.use("/api/price-lists", priceListRoutes);
 app.use("/api/governance", governanceRoutes);
 app.use("/api/approvals", approvalRoutes);
 app.use("/api/audit-logs", auditRoutes);

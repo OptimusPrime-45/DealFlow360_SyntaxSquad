@@ -106,7 +106,7 @@ export const updateSettings = asyncHandler(async (req, res) => {
     action: 'GOVERNANCE_SETTINGS_UPDATED',
     oldValue: previousSetting,
     newValue: updatedSetting,
-    reason: req.body.reason || 'Admin updated governance settings',
+    reason: req.body?.reason || 'Admin updated governance settings',
   });
 
   return res.status(200).json(
@@ -194,7 +194,7 @@ export const createDiscountRule = asyncHandler(async (req, res) => {
     entityId: rule.id,
     action: 'DISCOUNT_RULE_CREATED',
     newValue: rule,
-    reason: req.body.reason || 'Admin created discount rule',
+    reason: req.body?.reason || 'Admin created discount rule',
   });
 
   return res.status(201).json(
@@ -235,7 +235,7 @@ export const updateDiscountRule = asyncHandler(async (req, res) => {
     action: 'DISCOUNT_RULE_UPDATED',
     oldValue: existingRule,
     newValue: updatedRule,
-    reason: req.body.reason || 'Admin updated discount rule',
+    reason: req.body?.reason || 'Admin updated discount rule',
   });
 
   return res.status(200).json(
@@ -269,7 +269,7 @@ export const deleteDiscountRule = asyncHandler(async (req, res) => {
     entityId: id,
     action: 'DISCOUNT_RULE_DELETED',
     oldValue: existingRule,
-    reason: req.body.reason || 'Admin deleted discount rule',
+    reason: req.body?.reason || 'Admin deleted discount rule',
   });
 
   return res.status(200).json(
