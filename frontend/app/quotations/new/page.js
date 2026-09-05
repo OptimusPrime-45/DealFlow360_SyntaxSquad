@@ -188,8 +188,8 @@ export default function NewQuotationPage() {
     };
   }, [lines, products, selectedCustomer, discountRules]);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (e, autoSubmit = true) => {
+    if (e && e.preventDefault) e.preventDefault();
     if (!selectedCustomerId) {
       setError("Please select a customer");
       return;
@@ -205,6 +205,7 @@ export default function NewQuotationPage() {
     try {
       const payload = {
         customerId: selectedCustomerId,
+        autoSubmit,
         lines: lines.map((l, idx) => ({
           productId: l.productId,
           quantity: parseInt(l.quantity, 10) || 1,
@@ -253,13 +254,22 @@ export default function NewQuotationPage() {
             </Button>
           </Link>
           <Button
+            variant="secondary"
+            size="sm"
+            onClick={(e) => handleSubmit(e, false)}
+            loading={submitting}
+            className="font-medium text-xs"
+          >
+            Save as Draft
+          </Button>
+          <Button
             variant="primary"
             size="sm"
-            onClick={handleSubmit}
+            onClick={(e) => handleSubmit(e, true)}
             loading={submitting}
             className="font-semibold"
           >
-            Save & Evaluate Quotation
+            Confirm &amp; Submit Quotation
           </Button>
         </div>
       </header>
@@ -527,15 +537,24 @@ export default function NewQuotationPage() {
                 )}
               </div>
 
-              <div className="mt-4 pt-3 border-t border-[#E9ECEF]">
+              <div className="mt-4 pt-3 border-t border-[#E9ECEF] flex flex-col gap-2">
                 <Button
                   variant="primary"
                   size="md"
-                  onClick={handleSubmit}
+                  onClick={(e) => handleSubmit(e, true)}
                   loading={submitting}
                   className="w-full font-semibold"
                 >
-                  Confirm & Submit Quotation
+                  Confirm &amp; Submit Quotation
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={(e) => handleSubmit(e, false)}
+                  loading={submitting}
+                  className="w-full text-xs"
+                >
+                  Save as Draft
                 </Button>
               </div>
             </Card>

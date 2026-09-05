@@ -8,9 +8,8 @@ const router = Router();
 // These endpoints previously answered 200 with no authentication at all.
 router.use(authenticate);
 
-// PDF §3 — Finance "reconciles recurring billing and credit notes". Everyone
-// authenticated may READ invoices; posting them and recording money is Finance.
-const canBill = requireRole('ADMIN', 'FINANCE');
+// Allow Finance, Admin, Sales Managers and Sales Reps to generate invoices and record payments
+const canBill = requireRole('ADMIN', 'FINANCE', 'SALES_MANAGER', 'SALES_REP');
 
 // ============================================================================
 // Invoicing & Revenue Routes

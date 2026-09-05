@@ -68,6 +68,8 @@ export default function QuotationsPage() {
     DRAFT: "gray",
     PENDING_APPROVAL: "warning",
     APPROVED: "success",
+    SENT: "info",
+    UNDER_NEGOTIATION: "warning",
     REJECTED: "danger",
     CONFIRMED: "neutral",
   };
@@ -160,8 +162,10 @@ export default function QuotationsPage() {
                 <option value="DRAFT">Draft</option>
                 <option value="PENDING_APPROVAL">Pending Approval</option>
                 <option value="APPROVED">Approved</option>
-                <option value="REJECTED">Rejected</option>
+                <option value="SENT">Sent to Customer</option>
+                <option value="UNDER_NEGOTIATION">Under Negotiation</option>
                 <option value="CONFIRMED">Confirmed</option>
+                <option value="REJECTED">Rejected</option>
               </select>
             </div>
 

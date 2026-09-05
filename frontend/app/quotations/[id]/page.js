@@ -33,7 +33,7 @@ const STATUS_VARIANT = {
 export default function QuotationDetailPage() {
   const { id } = useParams();
   const router = useRouter();
-  const { isAuthenticated, loading: authLoading } = useAuth();
+  const { isAuthenticated, loading: authLoading, user } = useAuth();
 
   const [quotation, setQuotation] = useState(null);
   const [suggestions, setSuggestions] = useState([]);
@@ -164,6 +164,53 @@ export default function QuotationDetailPage() {
     }
   };
 
+  const confirmToOrder = async () => {
+    setBusy(true);
+    setNotice("");
+    setError("");
+    try {
+      const res = await apiClient.post(`/orders/${id}/confirm`, {});
+      setNotice("Quotation confirmed and order created successfully!");
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to confirm quotation to order");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleApproveStep = async (stepId) => {
+    setBusy(true);
+    setNotice("");
+    setError("");
+    try {
+      await apiClient.post(`/approvals/steps/${stepId}/approve`, { reason: "Approved by manager" });
+      setNotice("Approval step approved successfully!");
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to approve step");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRejectStep = async (stepId) => {
+    const reason = prompt("Enter reason for rejection (min 3 characters):");
+    if (!reason || reason.trim().length < 3) return;
+    setBusy(true);
+    setNotice("");
+    setError("");
+    try {
+      await apiClient.post(`/approvals/steps/${stepId}/reject`, { reason: reason.trim() });
+      setNotice("Approval step rejected. Quotation returned.");
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to reject step");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#F8F9FA]">
@@ -220,10 +267,20 @@ export default function QuotationDetailPage() {
               Send to Customer
             </Button>
           )}
+          {["APPROVED", "CONFIRMED"].includes(quotation.status) && !quotation.order && (
+            <Button variant="primary" size="sm" onClick={confirmToOrder} disabled={busy}>
+              Confirm Order &amp; Process Deal
+            </Button>
+          )}
           {quotation.order && (
-            <Link href={`/orders/${quotation.order.id}`}>
-              <Button variant="secondary" size="sm">Fulfillment &amp; Billing</Button>
-            </Link>
+            <>
+              <Link href={`/orders/${quotation.order.id}`}>
+                <Button variant="secondary" size="sm">Fulfillment</Button>
+              </Link>
+              <Link href="/invoicing">
+                <Button variant="primary" size="sm">Invoicing &amp; Billing</Button>
+              </Link>
+            </>
           )}
           {editable && (
             <Button variant="primary" size="sm" onClick={submit} disabled={busy}>
@@ -270,6 +327,109 @@ export default function QuotationDetailPage() {
               </a>
             </div>
           </div>
+        )}
+
+        {quotation.order && (
+          <div className="bg-[#E7F5EC] border border-[#28A745]/30 rounded-[8px] p-4 flex items-center justify-between">
+            <div>
+              <div className="text-sm font-bold text-[#155724] flex items-center gap-2">
+                <span>✓ Deal in Execution: Order #{quotation.order.orderNumber}</span>
+                <Badge variant="success" size="sm">{quotation.order.status}</Badge>
+              </div>
+              <p className="text-xs text-[#155724]/80 mt-1">
+                This deal has been confirmed into an active order. Track warehouse fulfillment and collect invoices.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link href={`/orders/${quotation.order.id}`}>
+                <Button variant="secondary" size="sm" className="text-xs">View Fulfillment</Button>
+              </Link>
+              <Link href="/invoicing">
+                <Button variant="primary" size="sm" className="text-xs">Collect Invoices</Button>
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* Approval Ladder / Lifecycle status */}
+        {quotation.status === "PENDING_APPROVAL" && (
+          <Card
+            title="Approval Ladder in Progress"
+            subtitle="The deal exceeds discount ceilings or margin rules and requires authorization"
+          >
+            {quotation.approvals?.[0] ? (
+              <div className="space-y-3">
+                <div className="text-xs text-[#6C757D]">
+                  Cycle #{quotation.approvals[0].approvalCycle} · Triggered by: {quotation.approvals[0].triggeredBy}
+                </div>
+                <div className="divide-y divide-[#E9ECEF] border border-[#E9ECEF] rounded-[6px]">
+                  {quotation.approvals[0].steps?.map((step) => {
+                    const isReviewerOrAdmin =
+                      user &&
+                      (user.role?.code === "ADMIN" || user.roleId === step.roleId) &&
+                      user.id !== quotation.salesRepId;
+
+                    return (
+                      <div key={step.id} className="p-3 flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-semibold text-[#212529]">
+                            Step {step.stepOrder}: {step.role?.name || "Reviewer"}
+                          </div>
+                          <div className="text-xs text-[#6C757D]">
+                            {step.reviewer ? `Reviewed by ${step.reviewer.fullName}` : "Awaiting review"}
+                            {step.reason && ` — "${step.reason}"`}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant={
+                              step.status === "APPROVED"
+                                ? "success"
+                                : step.status === "REJECTED"
+                                ? "danger"
+                                : "warning"
+                            }
+                            size="sm"
+                          >
+                            {step.status}
+                          </Badge>
+                          {step.status === "PENDING" && isReviewerOrAdmin && (
+                            <div className="flex gap-1.5 ml-2">
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                className="text-xs py-1 px-2.5"
+                                disabled={busy}
+                                onClick={() => handleApproveStep(step.id)}
+                              >
+                                Approve
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                className="text-xs py-1 px-2.5 text-[#DC3545]"
+                                disabled={busy}
+                                onClick={() => handleRejectStep(step.id)}
+                              >
+                                Reject
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {user?.id === quotation.salesRepId && (
+                  <p className="text-xs text-[#6C757D] italic">
+                    Note: Anti-self-approval rule in effect. You cannot approve your own quotation.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-[#6C757D]">Approval routing pending initialization.</p>
+            )}
+          </Card>
         )}
 
         {/* ── Governance summary: the blended picture, not just one line ── */}

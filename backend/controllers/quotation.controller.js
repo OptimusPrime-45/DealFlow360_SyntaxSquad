@@ -29,6 +29,7 @@ const createQuotationSchema = z.object({
   validUntil: z.string().datetime().optional().nullable(),
   promisedDeliveryAt: z.string().datetime().optional().nullable(),
   lines: z.array(lineInputSchema).min(1, "Quotation must contain at least one line"),
+  autoSubmit: z.boolean().optional().default(false),
 });
 
 const updateQuotationSchema = z.object({
@@ -113,6 +114,15 @@ export const getQuotationById = asyncHandler(async (req, res) => {
         orderBy: { position: "asc" },
       },
       approvals: {
+        include: {
+          steps: {
+            include: {
+              role: true,
+              reviewer: { select: { id: true, fullName: true, email: true } },
+            },
+            orderBy: { stepOrder: "asc" },
+          },
+        },
         orderBy: { approvalCycle: "desc" },
       },
       // So the UI can offer a link straight to fulfillment once confirmed.
@@ -340,9 +350,40 @@ export const createQuotation = asyncHandler(async (req, res) => {
     });
   });
 
+  let finalQuotation = quotation;
+  let routing = null;
+
+  if (validated.autoSubmit) {
+    routing = await routeQuotationForApproval({
+      quotationId: quotation.id,
+      actorUserId: salesRepId,
+      triggerSource: "REP_SUBMIT",
+    });
+
+    finalQuotation = await prisma.quotation.findUnique({
+      where: { id: quotation.id },
+      include: {
+        customer: true,
+        customerTier: true,
+        salesRep: { select: { id: true, fullName: true, email: true } },
+        lines: {
+          include: {
+            product: { include: { category: true } },
+          },
+        },
+      },
+    });
+  }
+
+  const message = routing
+    ? routing.autoApproved
+      ? "Quotation created and auto-approved"
+      : `Quotation created and routed to ${routing.evaluation?.requiredApprovalSteps?.map((s) => s.roleCode).join(" then ")}`
+    : "Quotation created successfully";
+
   return res
     .status(201)
-    .json(new ApiResponse(201, { quotation }, "Quotation created successfully"));
+    .json(new ApiResponse(201, { quotation: finalQuotation, routing }, message));
 });
 
 /**
@@ -405,8 +446,8 @@ export const submitQuotation = asyncHandler(async (req, res) => {
     throw new ApiError(403, "Forbidden: You can only submit your own quotations");
   }
 
-  // Only a draft (or a quote sent back for revision) can be submitted.
-  const SUBMITTABLE = ["DRAFT", "REJECTED"];
+  // Only a draft, rejected, or renegotiated quote can be submitted.
+  const SUBMITTABLE = ["DRAFT", "REJECTED", "UNDER_NEGOTIATION"];
   if (!SUBMITTABLE.includes(quotation.status)) {
     throw new ApiError(
       400,
