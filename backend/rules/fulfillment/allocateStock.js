@@ -1,4 +1,4 @@
-// backend/controllers/rules/fulfillment/allocateStock.js
+// backend/rules/fulfillment/allocateStock.js
 
 // Calculate stock that can actually be used.
 function getSellableQuantity(warehouse) {

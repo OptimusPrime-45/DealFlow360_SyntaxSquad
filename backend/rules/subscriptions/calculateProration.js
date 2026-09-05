@@ -1,4 +1,4 @@
-// backend/controllers/rules/subscriptions/calculateProration.js
+// backend/rules/subscriptions/calculateProration.js
 
 // Calculate the number of days between two dates.
 function getDaysBetween(

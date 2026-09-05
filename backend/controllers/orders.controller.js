@@ -2,7 +2,7 @@ import { prisma } from "../lib/prisma.js";
 
 import {
     confirmQuotation
-} from "./rules/orders/confirmQuotation.js";
+} from "../rules/orders/confirmQuotation.js";
 
 function generateOrderNumber() {
     const timestamp =

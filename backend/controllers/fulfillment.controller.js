@@ -4,23 +4,23 @@ import { prisma } from "../lib/prisma.js";
 
 import {
     selectWarehouses
-} from "./rules/fulfillment/selectWarehouses.js";
+} from "../rules/fulfillment/selectWarehouses.js";
 
 import {
     allocateStock
-} from "./rules/fulfillment/allocateStock.js";
+} from "../rules/fulfillment/allocateStock.js";
 
 import {
     validateAllocation
-} from "./rules/fulfillment/validateAllocation.js";
+} from "../rules/fulfillment/validateAllocation.js";
 
 import {
     createShipmentPlan
-} from "./rules/fulfillment/createShipments.js";
+} from "../rules/fulfillment/createShipments.js";
 
 import {
     calculateOrderStatus
-} from "./rules/fulfillment/calculateOrderStatus.js";
+} from "../rules/fulfillment/calculateOrderStatus.js";
 
 
 // Get the recommended fulfillment plan for an order.

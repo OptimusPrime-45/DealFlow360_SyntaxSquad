@@ -1,4 +1,4 @@
-// backend/controllers/rules/fulfillment/createShipments.js
+// backend/rules/fulfillment/createShipments.js
 
 // Group fulfillment allocations into shipment plans.
 // Each non-null warehouse represents one shipment group.

@@ -1,4 +1,4 @@
-// backend/controllers/rules/subscriptions/calculateBillingPeriod.js
+// backend/rules/subscriptions/calculateBillingPeriod.js
 
 // Calculate the end date for a billing interval.
 function addBillingInterval(

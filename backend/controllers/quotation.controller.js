@@ -4,7 +4,13 @@ import { ApiError } from "../utils/api-error.js";
 import { ApiResponse } from "../utils/api-response.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { calculateLineMath, round2, add, toNum } from "../lib/money.js";
-import { resolveEffectiveCeiling } from "../lib/resolveCeiling.js";
+// Single source of truth for ceiling resolution. This controller WRITES
+// effectiveCeilingPercent onto each line and governance.controller.js SCORES
+// those same lines — before the merge each side used a different resolver
+// (lib/resolveCeiling.js vs rules/resolveCeiling.js), so the two halves of one
+// decision could disagree. Both now call this one.
+import { resolveCeiling } from "../rules/resolveCeiling.js";
+import { scoreQuotation } from "../rules/scoreQuotation.js";
 
 // Input validation schema
 const lineInputSchema = z.object({
@@ -147,10 +153,13 @@ export const createQuotation = asyncHandler(async (req, res) => {
   let taxTotal = 0;
   let grandTotal = 0;
   let totalCost = 0;
-  let worstLineOverage = 0;
-  let weightedOverageSum = 0;
 
+  // Lines shaped for persistence (Prisma) …
   const preparedLines = [];
+  // … and the same lines shaped for the shared scoring engine. Kept separate
+  // because scoreQuotation() needs fields (referencePrice, effectiveDiscountPercent)
+  // that are not columns on QuotationLine.
+  const scoringLines = [];
 
   for (let i = 0; i < validated.lines.length; i++) {
     const item = validated.lines[i];
@@ -180,13 +189,28 @@ export const createQuotation = asyncHandler(async (req, res) => {
     const unitPrice = round2(toNum(product.basePrice) + extraPrice);
     const unitCost = round2(toNum(product.costPrice));
 
-    // Resolve Ceiling
-    const { effectiveCeilingPercent, minMarginPercent } = resolveEffectiveCeiling({
-      customerTier: customer.customerTier,
-      categoryId: product.categoryId,
+    // Resolve Ceiling using the shared rule engine.
+    // referencePrice is the list price; unitPrice is what is actually being
+    // charged. They are equal today because the input schema has no price
+    // override — but passing both means the PDF §2.5 anti-bypass check is
+    // already wired for when one is added.
+    const ceiling = resolveCeiling(
+      {
+        categoryId: product.categoryId,
+        referencePrice: unitPrice,
+        unitPrice,
+        discountPercent: item.discountPercent,
+      },
+      customer.customerTier,
       discountRules,
-      unconfiguredPolicy,
-    });
+      govSettings || { unconfiguredCeilingPolicy: unconfiguredPolicy }
+    );
+
+    if (ceiling.validationError) {
+      throw new ApiError(400, ceiling.validationError);
+    }
+
+    const { effectiveCeilingPercent, minMarginPercent } = ceiling;
 
     // Compute Line Math
     const math = calculateLineMath({
@@ -196,14 +220,13 @@ export const createQuotation = asyncHandler(async (req, res) => {
       discountPercent: item.discountPercent,
     });
 
-    // Overage
+    // Overage is measured against the EFFECTIVE discount (the greater of the
+    // entered percentage and any discount hidden in a reduced unit price), so
+    // a rep cannot bypass the ceiling by discounting the price directly.
     const overagePts = Math.max(
       0,
-      round2(item.discountPercent - effectiveCeilingPercent)
+      round2(ceiling.effectiveDiscountPercent - effectiveCeilingPercent)
     );
-    if (overagePts > worstLineOverage) {
-      worstLineOverage = overagePts;
-    }
 
     // Accumulate order totals
     subtotal = add(subtotal, math.grossTotal);
@@ -211,8 +234,18 @@ export const createQuotation = asyncHandler(async (req, res) => {
     grandTotal = add(grandTotal, math.lineTotal);
     totalCost = add(totalCost, math.totalCost);
 
-    // Value-weighted overage contribution: overage × lineValue
-    weightedOverageSum += overagePts * math.lineTotal;
+    scoringLines.push({
+      productId: product.id,
+      productName: product.name,
+      quantity: math.quantity,
+      unitPrice: math.unitPrice,
+      unitCost: math.unitCost,
+      referencePrice: unitPrice,
+      discountPercent: math.discountPercent,
+      effectiveDiscountPercent: ceiling.effectiveDiscountPercent,
+      effectiveCeilingPercent,
+      minMarginPercent,
+    });
 
     preparedLines.push({
       productId: product.id,
@@ -237,8 +270,18 @@ export const createQuotation = asyncHandler(async (req, res) => {
   const marginAmount = round2(grandTotal - totalCost);
   const marginPercent = grandTotal > 0 ? round2((marginAmount / grandTotal) * 100) : 0;
 
-  // Blended Score under VALUE_WEIGHTED strategy: Σ(overage × lineValue) / Σ lineValue
-  const blendedScore = grandTotal > 0 ? round2(weightedOverageSum / grandTotal) : 0;
+  // Score via the SHARED engine rather than recomputing it here. This controller
+  // used to derive the blended score inline, weighting by net (post-discount)
+  // line value and hardcoding VALUE_WEIGHTED — so it disagreed with
+  // governance.controller.js (which weights by gross list value) and silently
+  // ignored GovernanceSetting.scoreStrategy. The number a quotation STORES and
+  // the number that ROUTES it must come from the same function.
+  const verdict = scoreQuotation(scoringLines, {
+    scoreStrategy: govSettings?.scoreStrategy || "VALUE_WEIGHTED",
+  });
+  const blendedScore = verdict.blendedScore;
+  const worstLineOverage = verdict.worstLineOverage;
+  const marginFloorBreached = verdict.marginFloorBreached;
 
   const quotationNumber = await generateQuotationNumber();
 
@@ -259,6 +302,7 @@ export const createQuotation = asyncHandler(async (req, res) => {
         marginPercent,
         blendedScore,
         worstLineOverage,
+        marginFloorBreached,
         validUntil: validated.validUntil ? new Date(validated.validUntil) : null,
         promisedDeliveryAt: validated.promisedDeliveryAt
           ? new Date(validated.promisedDeliveryAt)

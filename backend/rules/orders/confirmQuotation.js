@@ -1,4 +1,4 @@
-// backend/controllers/rules/orders/confirmQuotation.js
+// backend/rules/orders/confirmQuotation.js
 
 // Statuses from which a quotation can be confirmed.
 const CONFIRMABLE_STATUSES = [

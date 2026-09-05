@@ -1,4 +1,4 @@
-// backend/controllers/rules/subscriptions/generateBillingSchedule.js
+// backend/rules/subscriptions/generateBillingSchedule.js
 
 import {
     calculateBillingPeriod

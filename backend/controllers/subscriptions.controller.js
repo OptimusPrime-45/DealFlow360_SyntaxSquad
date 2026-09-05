@@ -4,11 +4,11 @@ import { prisma } from "../lib/prisma.js";
 
 import {
     calculateBillingPeriod
-} from "./rules/subscriptions/calculateBillingPeriod.js";
+} from "../rules/subscriptions/calculateBillingPeriod.js";
 
 import {
     generateBillingSchedule
-} from "./rules/subscriptions/generateBillingSchedule.js";
+} from "../rules/subscriptions/generateBillingSchedule.js";
 
 
 // Create subscriptions for all recurring lines in an order.

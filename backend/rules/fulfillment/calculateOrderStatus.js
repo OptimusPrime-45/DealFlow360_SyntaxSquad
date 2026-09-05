@@ -1,4 +1,4 @@
-// backend/controllers/rules/fulfillment/calculateOrderStatus.js
+// backend/rules/fulfillment/calculateOrderStatus.js
 
 // Calculate the order status from fulfillment allocations.
 export function calculateOrderStatus(

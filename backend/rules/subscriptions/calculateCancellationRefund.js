@@ -1,4 +1,4 @@
-// backend/controllers/rules/subscriptions/calculateCancellationRefund.js
+// backend/rules/subscriptions/calculateCancellationRefund.js
 
 // Calculate the refund or credit amount for cancellation.
 export function calculateCancellationRefund(

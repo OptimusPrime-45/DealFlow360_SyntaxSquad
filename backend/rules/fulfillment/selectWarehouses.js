@@ -1,4 +1,4 @@
-// backend/controllers/rules/fulfillment/selectWarehouses.js
+// backend/rules/fulfillment/selectWarehouses.js
 
 export function selectWarehouses(
   warehouses,
