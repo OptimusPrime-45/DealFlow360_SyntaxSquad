@@ -129,7 +129,7 @@ async function run() {
   const createdWh = await api("/api/warehouses", {
     method: "POST",
     token: adminToken,
-    body: { code: whCode, name: "Verification Depot", shippingWeight: 2.5, priority: 1 },
+    body: { code: whCode, name: "Verification Depot", shippingWeight: 2.5 },
   });
   check(createdWh.status === 201, "Admin can CREATE a warehouse through the API");
   const tempWarehouseId = createdWh.data?.data?.warehouse?.id;
@@ -410,7 +410,8 @@ async function run() {
   const SERVER_ORDER = 6; // two more than exist anywhere
 
   const serverProduct = bySku["HW-SERVER-2U"];
-  for (const [wh, qty] of [[main, 0], [east, SERVER_TOTAL]]) {
+  for (const wh of allWarehouses) {
+    const qty = wh.id === east.id ? SERVER_TOTAL : 0;
     await api(`/api/warehouses/${wh.id}/inventory`, {
       method: "PUT",
       token: adminToken,

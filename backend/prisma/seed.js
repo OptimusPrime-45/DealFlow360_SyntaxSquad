@@ -403,14 +403,12 @@ async function main() {
       name: "Main Central DC",
       address: "Plot 12, Industrial Area, Whitefield, Bengaluru",
       shippingWeight: 1.0, // Preferred warehouse
-      priority: 10,
     },
     {
       code: "WH-EAST",
       name: "East Regional Hub",
       address: "Sector 5, Salt Lake, Kolkata",
       shippingWeight: 1.8,
-      priority: 5,
     },
   ];
 

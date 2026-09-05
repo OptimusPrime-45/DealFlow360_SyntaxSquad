@@ -40,10 +40,6 @@ export function selectWarehouses(
           shippingWeight:
             Number(
               warehouse.shippingWeight || 0
-            ),
-          priority:
-            Number(
-              warehouse.priority || 0
             )
         })
       )
@@ -106,10 +102,9 @@ export function selectWarehouses(
         );
       }
 
-      // Higher priority wins as final tie-breaker.
-      return (
-        b.priority -
-        a.priority
+      // Deterministic warehouse identifier tie-breaker
+      return String(a.code || a.id || "").localeCompare(
+        String(b.code || b.id || "")
       );
     }
   );
