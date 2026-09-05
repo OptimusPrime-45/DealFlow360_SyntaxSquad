@@ -56,6 +56,7 @@ export default function PlansPage() {
   return (
     <>
       <AdminHeader
+        section="Catalogue"
         title="Subscription Plans"
         description="Recurring plans attached to subscription products. A quotation line using a plan generates its own billing schedule, billed separately from one-time lines on the same order."
       />

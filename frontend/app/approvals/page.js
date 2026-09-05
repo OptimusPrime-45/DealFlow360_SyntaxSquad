@@ -248,7 +248,7 @@ export default function ApprovalsPage() {
                     onChange={(e) => setReason(e.target.value)}
                     rows={2}
                     placeholder="Reason (required to reject or return)"
-                    className="w-full px-3 py-2 text-sm border border-[#DEE2E6] rounded-[6px] mb-3"
+                    className="w-full px-3 py-2 text-sm bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] mb-3 placeholder:text-[#868E96] focus:border-[#714B67] focus:outline-none"
                   />
 
                   <div className="space-y-2">

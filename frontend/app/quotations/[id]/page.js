@@ -317,7 +317,7 @@ export default function QuotationDetailPage() {
                 readOnly
                 value={portalLink}
                 onFocus={(e) => e.target.select()}
-                className="flex-1 px-3 py-2 text-xs font-mono border border-[#DEE2E6] rounded-[6px] bg-[#F8F9FA]"
+                className="flex-1 px-3 py-2 text-xs font-mono text-[#212529] border border-[#CED4DA] rounded-[6px] bg-[#F8F9FA] select-all focus:outline-none focus:border-[#714B67]"
               />
               <Button variant="secondary" size="sm" className="text-xs" onClick={copyLink}>
                 {copied ? "Copied" : "Copy"}
@@ -514,8 +514,8 @@ export default function QuotationDetailPage() {
                               const v = Number(e.target.value);
                               if (v !== Number(line.discountPercent)) changeDiscount(line.id, v);
                             }}
-                            className={`w-20 px-2 py-1 text-sm border rounded-[4px] ${
-                              over ? "border-[#DC3545] text-[#DC3545] font-semibold" : "border-[#DEE2E6]"
+                            className={`w-20 px-2 py-1 text-sm bg-white rounded-[4px] focus:outline-none ${
+                              over ? "border border-[#DC3545] text-[#DC3545] font-semibold" : "border border-[#CED4DA] text-[#212529] focus:border-[#714B67]"
                             }`}
                           />
                         ) : (

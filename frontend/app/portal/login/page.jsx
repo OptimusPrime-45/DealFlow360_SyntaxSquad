@@ -95,7 +95,7 @@ export default function PortalLoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@company.com"
-              className="w-full px-3 py-2 text-sm border border-[#D1D5DB] rounded-[8px]"
+              className="w-full px-3 py-2 text-sm bg-white text-[#212529] border border-[#CED4DA] rounded-[8px] placeholder:text-[#868E96] focus:border-[#714B67] focus:outline-none"
             />
           </div>
 
@@ -106,7 +106,7 @@ export default function PortalLoginPage() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-[#D1D5DB] rounded-[8px]"
+              className="w-full px-3 py-2 text-sm bg-white text-[#212529] border border-[#CED4DA] rounded-[8px] placeholder:text-[#868E96] focus:border-[#714B67] focus:outline-none"
             />
           </div>
 

@@ -516,7 +516,7 @@ export default function InvoicingDashboardPage() {
               placeholder="Search by Invoice #, Order, Customer..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#714B67] focus:border-[#714B67]"
+              className="w-full pl-9 pr-4 py-2 bg-white text-[#212529] border border-[#CED4DA] rounded-md text-sm placeholder:text-[#868E96] focus:outline-none focus:ring-1 focus:ring-[#714B67] focus:border-[#714B67]"
             />
             <svg
               className="w-4 h-4 text-gray-400 absolute left-3 top-3"
@@ -536,7 +536,7 @@ export default function InvoicingDashboardPage() {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="text-xs border border-gray-300 rounded-md px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#714B67]"
+                className="text-xs border border-[#CED4DA] rounded-md px-2.5 py-1.5 bg-white text-[#212529] focus:outline-none focus:ring-1 focus:ring-[#714B67]"
               >
                 <option value="ALL">All Statuses</option>
                 <option value="DRAFT">Draft</option>
@@ -552,7 +552,7 @@ export default function InvoicingDashboardPage() {
               <select
                 value={typeFilter}
                 onChange={(e) => setTypeFilter(e.target.value)}
-                className="text-xs border border-gray-300 rounded-md px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#714B67]"
+                className="text-xs border border-[#CED4DA] rounded-md px-2.5 py-1.5 bg-white text-[#212529] focus:outline-none focus:ring-1 focus:ring-[#714B67]"
               >
                 <option value="ALL">All Types</option>
                 <option value="ONE_TIME">One-Time Sale</option>
@@ -767,7 +767,7 @@ export default function InvoicingDashboardPage() {
                     required
                     value={paymentAmount}
                     onChange={(e) => setPaymentAmount(e.target.value)}
-                    className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-md text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#714B67]"
+                    className="w-full pl-8 pr-4 py-2 bg-white text-[#212529] border border-[#CED4DA] rounded-md text-sm font-medium placeholder:text-[#868E96] focus:outline-none focus:ring-2 focus:ring-[#714B67]"
                     placeholder="Enter amount"
                   />
                 </div>
@@ -801,7 +801,7 @@ export default function InvoicingDashboardPage() {
                 <select
                   value={paymentMethod}
                   onChange={(e) => setPaymentMethod(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#714B67]"
+                  className="w-full px-3 py-2 border border-[#CED4DA] rounded-md text-sm bg-white text-[#212529] focus:outline-none focus:ring-2 focus:ring-[#714B67]"
                 >
                   <option value="BANK_TRANSFER">Bank Wire Transfer (NEFT / RTGS / IMPS)</option>
                   <option value="CARD">Corporate Credit / Debit Card</option>
@@ -820,7 +820,7 @@ export default function InvoicingDashboardPage() {
                   value={transactionRef}
                   onChange={(e) => setTransactionRef(e.target.value)}
                   placeholder="e.g. UTR-AXIS-992019"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#714B67]"
+                  className="w-full px-3 py-2 border border-[#CED4DA] rounded-md text-sm font-mono bg-white text-[#212529] placeholder:text-[#868E96] focus:outline-none focus:ring-2 focus:ring-[#714B67]"
                 />
               </div>
 
