@@ -22,6 +22,7 @@ const lineInputSchema = z.object({
   discountPercent: z.number().min(0).max(100).default(0),
   taxRate: z.number().min(0).default(0),
   position: z.number().int().optional().default(0),
+  addedViaUpsell: z.boolean().optional().default(false),
 });
 
 const createQuotationSchema = z.object({
@@ -287,6 +288,7 @@ export const createQuotation = asyncHandler(async (req, res) => {
       overagePts,
       lineTotal: math.lineTotal,
       lineMarginPercent: math.marginPercent,
+      addedViaUpsell: Boolean(item.addedViaUpsell),
       position: item.position !== undefined ? item.position : i,
     });
   }
@@ -449,6 +451,19 @@ export const submitQuotation = asyncHandler(async (req, res) => {
   // Only a draft, rejected, or renegotiated quote can be submitted.
   const SUBMITTABLE = ["DRAFT", "REJECTED", "UNDER_NEGOTIATION"];
   if (!SUBMITTABLE.includes(quotation.status)) {
+    if (quotation.status === "PENDING_APPROVAL" || quotation.status === "APPROVED") {
+      return res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            autoApproved: quotation.status === "APPROVED",
+            status: quotation.status,
+            alreadySubmitted: true,
+          },
+          `Quotation ${quotation.quotationNumber} is already submitted (status: ${quotation.status})`
+        )
+      );
+    }
     throw new ApiError(
       400,
       `Quotation ${quotation.quotationNumber} cannot be submitted from status ${quotation.status}`

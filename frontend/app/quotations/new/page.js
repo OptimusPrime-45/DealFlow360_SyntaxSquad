@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "../../../context/AuthContext.js";
 import apiClient from "../../../lib/apiClient.js";
 import { Button, Input, Card, Badge, Table } from "../../../components/ui/index.js";
+import { getUpsellSuggestionsForProducts } from "../../../lib/upsellCatalog.js";
 
 export default function NewQuotationPage() {
   const router = useRouter();
@@ -22,6 +23,10 @@ export default function NewQuotationPage() {
   const [revisionData, setRevisionData] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  // Upsell state & live feedback
+  const [upsellNotice, setUpsellNotice] = useState(null);
+  const [recentlyAddedIndex, setRecentlyAddedIndex] = useState(null);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -221,6 +226,52 @@ export default function NewQuotationPage() {
     };
   }, [lines, products, selectedCustomer, discountRules]);
 
+  // Compute 1-to-2 deterministic upsell suggestions based on products on this quote
+  const upsellSuggestions = useMemo(() => {
+    return getUpsellSuggestionsForProducts(lines, products);
+  }, [lines, products]);
+
+  // Accept an upsell suggestion: immediately appends line and confirms total & margin update right away
+  const handleAcceptUpsell = (suggestion) => {
+    if (!suggestion || !suggestion.productId) return;
+
+    const oldTotal = calculatedData.netTotal;
+    const oldMargin = calculatedData.dealMarginPercent;
+
+    const newLine = {
+      productId: suggestion.productId,
+      quantity: 1,
+      discountPercent: 0,
+      addedViaUpsell: true,
+      upsellReason: suggestion.reason,
+    };
+
+    setLines((prev) => [...prev, newLine]);
+    setRecentlyAddedIndex(lines.length);
+
+    // Compute expected numbers immediately for instantaneous visual feedback
+    const unitPrice = Number(suggestion.unitPrice) || 0;
+    const unitCost = Number(suggestion.costPrice) || 0;
+    const newNetTotal = oldTotal + unitPrice;
+    const newMarginAmount = (calculatedData.dealMarginAmount || 0) + (unitPrice - unitCost);
+    const newMarginPercent = newNetTotal > 0 ? (newMarginAmount / newNetTotal) * 100 : 0;
+
+    setUpsellNotice({
+      name: suggestion.name,
+      sku: suggestion.sku,
+      price: unitPrice,
+      oldTotal,
+      newTotal: newNetTotal,
+      oldMargin,
+      newMargin: newMarginPercent,
+      timestamp: Date.now(),
+    });
+
+    setTimeout(() => {
+      setRecentlyAddedIndex(null);
+    }, 3500);
+  };
+
   const handleSubmit = async (e, autoSubmit = true) => {
     if (e && e.preventDefault) e.preventDefault();
     if (!selectedCustomerId) {
@@ -245,20 +296,11 @@ export default function NewQuotationPage() {
           quantity: parseInt(l.quantity, 10) || 1,
           discountPercent: parseFloat(l.discountPercent) || 0,
           position: idx,
+          addedViaUpsell: Boolean(l.addedViaUpsell),
         })),
       };
 
-      const res = await apiClient.post("/quotations", payload);
-      const newQuotationId = res?.quotation?.id;
-
-      if (autoSubmit && newQuotationId) {
-        try {
-          await apiClient.post(`/quotations/${newQuotationId}/submit`, {});
-        } catch (submitErr) {
-          console.error("Auto submit failed:", submitErr);
-        }
-      }
-
+      await apiClient.post("/quotations", payload);
       router.push("/quotations");
     } catch (err) {
       setError(err.message || "Failed to create quotation");
@@ -345,6 +387,32 @@ export default function NewQuotationPage() {
           </div>
         )}
 
+        {/* Upsell Accepted Confirmation Banner */}
+        {upsellNotice && (
+          <div className="bg-[#E7F5EC] border-2 border-[#28A745] text-[#155724] rounded-[8px] p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">⚡</span>
+              <div>
+                <div className="text-sm font-bold text-[#155724] flex items-center gap-2">
+                  <span>Upsell Accepted: Added {upsellNotice.name}</span>
+                  <Badge variant="success" size="sm">CONFIRMED</Badge>
+                </div>
+                <div className="text-xs text-[#155724]/90 mt-0.5">
+                  Order Total updated immediately: <strong>₹{upsellNotice.oldTotal.toLocaleString()}</strong> → <strong className="text-[#0f5132] font-mono text-sm underline decoration-2">₹{upsellNotice.newTotal.toLocaleString()}</strong> (+₹{upsellNotice.price.toLocaleString()}) &nbsp;•&nbsp;
+                  Overall Margin updated: <strong>{upsellNotice.oldMargin.toFixed(1)}%</strong> → <strong className="text-[#0f5132] font-mono text-sm underline decoration-2">{upsellNotice.newMargin.toFixed(1)}%</strong>
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setUpsellNotice(null)}
+              className="text-xs font-bold text-[#155724] hover:text-[#0f5132] self-end sm:self-center px-2.5 py-1 rounded hover:bg-[#28A745]/15 cursor-pointer transition"
+            >
+              ✕ Dismiss
+            </button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left 2 Cols: Customer & Line Items */}
           <div className="lg:col-span-2 space-y-6">
@@ -406,12 +474,30 @@ export default function NewQuotationPage() {
                 {calculatedData.computedLines.map((line, idx) => (
                   <div
                     key={idx}
-                    className="p-4 bg-[#F8F9FA] border border-[#DEE2E6] rounded-[6px] space-y-3 relative group"
+                    className={`p-4 rounded-[6px] space-y-3 relative group transition-all duration-300 ${
+                      idx === recentlyAddedIndex
+                        ? "bg-[#E7F5EC] border-2 border-[#28A745] shadow-sm ring-2 ring-[#28A745]/30"
+                        : line.addedViaUpsell
+                        ? "bg-[#F0F4F8] border-2 border-[#714B67]/30"
+                        : "bg-[#F8F9FA] border border-[#DEE2E6]"
+                    }`}
                   >
                     <div className="flex items-center justify-between border-b border-[#E9ECEF] pb-2">
-                      <span className="text-xs font-bold text-[#714B67] uppercase tracking-wider">
-                        Line #{idx + 1} · {line.product.productType || "ONE_TIME"}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-[#714B67] uppercase tracking-wider">
+                          Line #{idx + 1} · {line.product.productType || "ONE_TIME"}
+                        </span>
+                        {line.addedViaUpsell && (
+                          <Badge variant="info" size="sm">
+                            ⚡ UPSELL ITEM
+                          </Badge>
+                        )}
+                        {idx === recentlyAddedIndex && (
+                          <span className="text-[10px] bg-[#28A745] text-white font-bold px-2 py-0.5 rounded-full animate-pulse">
+                            JUST ADDED
+                          </span>
+                        )}
+                      </div>
                       {lines.length > 1 && (
                         <button
                           type="button"
@@ -528,6 +614,87 @@ export default function NewQuotationPage() {
                 ))}
               </div>
             </Card>
+
+            {/* Step 3: Upsell & Cross-Sell Recommendations */}
+            <Card
+              title="3. ⚡ Recommended Upsell & Cross-Sell Add-ons"
+              subtitle="Tailored 1-to-2 recommendations based on products selected above. Accept an upsell to immediately boost quote value and gross margin."
+            >
+              {upsellSuggestions.length === 0 ? (
+                <div className="p-4 text-center text-xs text-[#6C757D] bg-[#F8F9FA] rounded-[6px]">
+                  Select products above to unlock tailored upsell recommendations.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  {upsellSuggestions.map((s) => {
+                    const isAdded = lines.some((l) => l.productId === s.productId);
+                    return (
+                      <div
+                        key={s.productId}
+                        className={`p-3.5 rounded-[8px] border transition-all flex flex-col justify-between ${
+                          isAdded
+                            ? "bg-[#E7F5EC]/50 border-[#28A745]/40"
+                            : "bg-white border-[#DEE2E6] hover:border-[#714B67]/50 hover:shadow-xs"
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2 mb-1.5">
+                            <div>
+                              <div className="font-bold text-xs text-[#212529] leading-tight">
+                                {s.name}
+                              </div>
+                              <div className="text-[10px] font-mono text-[#6C757D]">
+                                SKU: {s.sku} · {s.category}
+                              </div>
+                            </div>
+                            <Badge variant={isAdded ? "success" : "warning"} size="sm">
+                              {isAdded ? "✓ Added" : s.promotionTag}
+                            </Badge>
+                          </div>
+
+                          <p className="text-[11px] text-[#495057] italic bg-[#F8F9FA] p-1.5 rounded border border-[#E9ECEF] mb-2.5">
+                            &quot;{s.reason}&quot;
+                          </p>
+
+                          <div className="grid grid-cols-2 gap-2 bg-[#F8F9FA] p-2 rounded text-xs mb-3">
+                            <div>
+                              <span className="text-[10px] text-[#6C757D] block">Unit Price</span>
+                              <span className="font-bold text-[#212529]">₹{s.unitPrice.toLocaleString()}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-[#6C757D] block">Margin Impact</span>
+                              <span className="font-bold text-[#28A745]">
+                                +₹{s.marginDelta.toLocaleString()} ({s.marginPercent.toFixed(1)}%)
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-[#E9ECEF] flex items-center justify-between">
+                          <span className="text-[10px] text-[#6C757D] truncate max-w-[140px]">
+                            For: <strong>{s.parentProductName}</strong>
+                          </span>
+                          {isAdded ? (
+                            <span className="text-xs font-semibold text-[#28A745] flex items-center gap-1">
+                              ✓ In Quote
+                            </span>
+                          ) : (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              onClick={() => handleAcceptUpsell(s)}
+                              className="text-xs font-bold bg-[#714B67] hover:bg-[#593952] whitespace-nowrap cursor-pointer"
+                            >
+                              ⚡ Accept Upsell (+ Add)
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
           </div>
 
           {/* Right Col: Live Governance & Margin Summary */}
@@ -550,22 +717,40 @@ export default function NewQuotationPage() {
 
                 <div className="pt-2 border-t border-[#E9ECEF] flex items-center justify-between text-sm">
                   <span className="font-bold text-[#212529]">Grand Total (Net):</span>
-                  <span className="font-bold text-[#714B67] text-base">
-                    ₹{calculatedData.netTotal.toLocaleString()}
-                  </span>
+                  <div className="text-right">
+                    <span
+                      className={`font-bold text-base transition-colors ${
+                        upsellNotice ? "text-[#28A745]" : "text-[#714B67]"
+                      }`}
+                    >
+                      ₹{calculatedData.netTotal.toLocaleString()}
+                    </span>
+                    {upsellNotice && (
+                      <span className="block text-[10px] text-[#28A745] font-semibold animate-pulse">
+                        +₹{upsellNotice.price.toLocaleString()} from upsell
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="pt-3 border-t border-[#E9ECEF] flex items-center justify-between text-xs">
                   <span className="font-semibold text-[#495057]">Overall Deal Margin:</span>
-                  <span
-                    className={`font-bold text-sm ${
-                      calculatedData.dealMarginPercent < 15
-                        ? "text-[#DC3545]"
-                        : "text-[#28A745]"
-                    }`}
-                  >
-                    {calculatedData.dealMarginPercent.toFixed(1)}%
-                  </span>
+                  <div className="text-right">
+                    <span
+                      className={`font-bold text-sm transition-colors ${
+                        calculatedData.dealMarginPercent < 15
+                          ? "text-[#DC3545]"
+                          : "text-[#28A745]"
+                      }`}
+                    >
+                      {calculatedData.dealMarginPercent.toFixed(1)}%
+                    </span>
+                    {upsellNotice && (
+                      <span className="block text-[10px] text-[#28A745] font-semibold">
+                        Margin updated immediately
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </Card>
