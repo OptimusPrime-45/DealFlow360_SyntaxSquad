@@ -222,8 +222,12 @@ export default function OrdersListPage() {
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <Link href={`/orders/${order.id}`}>
-                          <Button variant="secondary" size="sm" className="text-xs">
-                            Fulfillment
+                          <Button
+                            variant={order.status === "PENDING_FULFILLMENT" || order.status === "BACKORDERED" ? "primary" : "secondary"}
+                            size="sm"
+                            className="text-xs"
+                          >
+                            📦 Fulfillment &amp; Split
                           </Button>
                         </Link>
                         {order.status !== "COMPLETED" && (
