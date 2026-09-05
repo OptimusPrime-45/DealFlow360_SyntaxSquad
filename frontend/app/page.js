@@ -1,67 +1,163 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.js
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+import React, { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "../context/AuthContext.js";
+import { Button, Card, Badge } from "../components/ui/index.js";
+
+export default function HomePage() {
+  const router = useRouter();
+  const { user, loading, logout, isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    if (!loading && !isAuthenticated) {
+      router.push("/login");
+    }
+  }, [loading, isAuthenticated, router]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F8F9FA]">
+        <div className="text-center">
+          <div className="w-8 h-8 border-3 border-[#714B67] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-sm font-medium text-[#6C757D]">
+            Authenticating workspace...
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+      </div>
+    );
+  }
+
+  if (!user) {
+    return null;
+  }
+
+  const roleColors = {
+    ADMIN: "danger",
+    SALES_MANAGER: "warning",
+    FINANCE: "info",
+    SALES_REP: "neutral",
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F8F9FA] flex flex-col">
+      {/* Top Navbar */}
+      <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-10 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-[8px] bg-[#714B67] text-white flex items-center justify-center font-bold text-sm">
+            DF
+          </div>
+          <div>
+            <div className="font-bold text-base text-[#212529] tracking-tight">
+              DealFlow360
+            </div>
+            <div className="text-[11px] text-[#6C757D]">
+              Self-Governing Deal Engine
+            </div>
+          </div>
+        </div>
+
+        {/* User profile & action */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2.5 text-right">
+            <div>
+              <div className="text-sm font-semibold text-[#212529]">
+                {user.fullName}
+              </div>
+              <div className="text-xs text-[#6C757D]">{user.email}</div>
+            </div>
+            <Badge variant={roleColors[user.role] || "neutral"} size="sm">
+              {user.role}
+            </Badge>
+          </div>
+
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={logout}
+            className="text-xs"
           >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            Sign Out
+          </Button>
+        </div>
+      </header>
+
+      {/* Main Workspace Content */}
+      <main className="flex-1 max-w-6xl w-full mx-auto p-6 space-y-6">
+        {/* Welcome Banner */}
+        <div className="bg-white border border-[#DEE2E6] rounded-[8px] p-6 shadow-xs flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-[#212529]">
+              Welcome back, {user.fullName}
+            </h1>
+            <p className="text-sm text-[#6C757D] mt-1">
+              Active Role:{" "}
+              <span className="font-semibold text-[#714B67]">{user.roleName || user.role}</span>{" "}
+              · Internal Bearer Token Active
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="success" size="md">
+              System Online
+            </Badge>
+          </div>
+        </div>
+
+        {/* Track Overview Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card
+            title="Track P4: Identity & Quotation Engine"
+            subtitle="Catalog, Customers, Tiers, and Line Math"
           >
-            Documentation
-          </a>
+            <p className="text-xs text-[#6C757D] mb-4">
+              Authentication active with dual JWT tokens. Next modules: Customer
+              Tiers, Products & Variants, Price Lists, and the interactive Quote Builder.
+            </p>
+            <div className="flex gap-2">
+              <Badge variant="neutral" size="sm">Auth Ready</Badge>
+              <Badge variant="neutral" size="sm">JWT + Refresh</Badge>
+              <Badge variant="neutral" size="sm">Role Guarded</Badge>
+            </div>
+          </Card>
+
+          <Card
+            title="Track P1: Governance & Risk Engine"
+            subtitle="Pure rule functions & Approval policy ladder"
+          >
+            <p className="text-xs text-[#6C757D] mb-4">
+              Config-driven discount ceilings (CustomerTier, Category overrides),
+              blended score calculation, and multi-step approval routing.
+            </p>
+            <div className="flex gap-2">
+              <Badge variant="gray" size="sm">P1 Parallel Track</Badge>
+            </div>
+          </Card>
+
+          <Card
+            title="Track P2: Fulfillment & Hybrid Billing"
+            subtitle="Multi-warehouse greedy split & Subscriptions"
+          >
+            <p className="text-xs text-[#6C757D] mb-4">
+              Stock allocation across warehouses with backorder support, order
+              confirmation freeze, and dual one-time/recurring billing streams.
+            </p>
+            <div className="flex gap-2">
+              <Badge variant="gray" size="sm">P2 Parallel Track</Badge>
+            </div>
+          </Card>
+
+          <Card
+            title="Track P3: Customer Portal & Revenue"
+            subtitle="Magic links, Negotiation & Invoicing"
+          >
+            <p className="text-xs text-[#6C757D] mb-4">
+              Cryptographically isolated portal token, counter-discount triggers,
+              and invoice payment status tracking.
+            </p>
+            <div className="flex gap-2">
+              <Badge variant="gray" size="sm">P3 Parallel Track</Badge>
+            </div>
+          </Card>
         </div>
       </main>
     </div>
