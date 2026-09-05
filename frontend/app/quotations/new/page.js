@@ -13,6 +13,7 @@ export default function NewQuotationPage() {
 
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
+  const [discountRules, setDiscountRules] = useState([]);
   const [loadingInitial, setLoadingInitial] = useState(true);
 
   // Form State
@@ -27,17 +28,20 @@ export default function NewQuotationPage() {
     }
   }, [authLoading, isAuthenticated, router]);
 
-  // Load Customers and Products on mount
+  // Load Customers, Products, and Discount Rules on mount
   useEffect(() => {
     const loadCatalogData = async () => {
       try {
-        const [custRes, prodRes] = await Promise.all([
+        const [custRes, prodRes, rulesRes] = await Promise.all([
           apiClient.get("/customers"),
           apiClient.get("/products"),
+          apiClient.get("/governance/discount-rules").catch(() => []),
         ]);
         const custList = custRes.customers || [];
         setCustomers(custList);
         setProducts(prodRes.products || []);
+        const rules = Array.isArray(rulesRes) ? rulesRes : (rulesRes?.rules || rulesRes?.data || []);
+        setDiscountRules(rules);
 
         // Default to first customer if available
         if (custList.length > 0) {
@@ -95,11 +99,12 @@ export default function NewQuotationPage() {
     setLines((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Live client-side calculation of line math and order totals
+  // Live client-side calculation of line math and order totals using Strictest Limit Algorithm (PDF §2.4)
   const calculatedData = useMemo(() => {
     const tierCeiling = selectedCustomer?.customerTier?.maxDiscountPercent
       ? Number(selectedCustomer.customerTier.maxDiscountPercent)
-      : 0;
+      : null;
+    const tierId = selectedCustomer?.customerTierId || selectedCustomer?.customerTier?.id;
 
     let grossTotal = 0;
     let totalDiscounts = 0;
@@ -121,8 +126,28 @@ export default function NewQuotationPage() {
       const marginAmount = lineNet - lineCost;
       const marginPercent = lineNet > 0 ? (marginAmount / lineNet) * 100 : 0;
 
-      // Estimated ceiling (Tier ceiling default for live preview)
-      const overage = Math.max(0, discount - tierCeiling);
+      // Strictest Limit Algorithm: MIN(tierCeiling, categoryRules)
+      const candidateLimits = [];
+      if (tierCeiling !== null && tierCeiling !== undefined) {
+        candidateLimits.push(tierCeiling);
+      }
+
+      const productCategoryId = product.categoryId;
+      if (productCategoryId && Array.isArray(discountRules)) {
+        discountRules.forEach((r) => {
+          if (r.isActive === false) return;
+          const matchesTier = !r.customerTierId || r.customerTierId === tierId;
+          const matchesCategory = !r.categoryId || r.categoryId === productCategoryId;
+          if (matchesTier && matchesCategory && (r.customerTierId || r.categoryId)) {
+            if (r.maxDiscountPercent !== null && r.maxDiscountPercent !== undefined) {
+              candidateLimits.push(Number(r.maxDiscountPercent));
+            }
+          }
+        });
+      }
+
+      const effectiveCeiling = candidateLimits.length > 0 ? Math.min(...candidateLimits) : (tierCeiling ?? 0);
+      const overage = Math.max(0, Number((discount - effectiveCeiling).toFixed(2)));
       if (overage > worstOverage) {
         worstOverage = overage;
       }
@@ -139,6 +164,7 @@ export default function NewQuotationPage() {
         unitCost,
         qty,
         discount,
+        effectiveCeiling,
         lineGross,
         discountAmount,
         lineNet,
@@ -158,9 +184,9 @@ export default function NewQuotationPage() {
       dealMarginAmount,
       dealMarginPercent,
       worstOverage,
-      tierCeiling,
+      tierCeiling: tierCeiling ?? 0,
     };
-  }, [lines, products, selectedCustomer]);
+  }, [lines, products, selectedCustomer, discountRules]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -410,10 +436,13 @@ export default function NewQuotationPage() {
                       </div>
 
                       {/* Governance Status Indicator */}
-                      <div>
-                        {line.discount > calculatedData.tierCeiling ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-[#6C757D]">
+                          Ceiling: <strong className="text-[#495057]">{line.effectiveCeiling ? `${line.effectiveCeiling.toFixed(1)}%` : "0%"}</strong>
+                        </span>
+                        {line.overage > 0 ? (
                           <Badge variant="danger" size="sm">
-                            +{line.overage.toFixed(1)}% Over Ceiling
+                            +{line.overage.toFixed(1)} pts Over Ceiling
                           </Badge>
                         ) : (
                           <Badge variant="success" size="sm">
