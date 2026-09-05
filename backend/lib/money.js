@@ -41,20 +41,6 @@ export function round(val, decimals = 2) {
 }
 
 /**
- * Addition: a + b
- */
-export function add(a, b) {
-  return round(toNumber(a) + toNumber(b), 2);
-}
-
-/**
- * Subtraction: a - b
- */
-export function sub(a, b) {
-  return round(toNumber(a) - toNumber(b), 2);
-}
-
-/**
  * Multiplication: a * b
  */
 export function mul(a, b, decimals = 2) {
@@ -86,3 +72,76 @@ export function marginPct(price, cost) {
   if (p <= 0) return 0;
   return round(((p - c) / p) * 100, 2);
 }
+
+/**
+ * Addition: a + b
+ */
+export function add(a, b) {
+  return round(toNumber(a) + toNumber(b), 2);
+}
+
+/**
+ * Subtraction: a - b
+ */
+export function sub(a, b) {
+  return round(toNumber(a) - toNumber(b), 2);
+}
+
+/**
+ * Line item arithmetic
+ */
+export function calculateLineMath({
+  quantity = 1,
+  unitPrice = 0,
+  unitCost = 0,
+  discountPercent = 0,
+}) {
+  const qty = Math.max(1, parseInt(quantity, 10) || 1);
+  const price = round(unitPrice);
+  const cost = round(unitCost);
+  const discPct = Math.max(0, Math.min(100, round(discountPercent)));
+
+  const grossTotal = mul(qty, price);
+  const discountAmount = pct(grossTotal, discPct);
+  const lineTotal = sub(grossTotal, discountAmount); // Net Total
+  const totalCost = mul(qty, cost);
+  const marginAmount = sub(lineTotal, totalCost);
+
+  let marginPercent = 0;
+  if (lineTotal > 0) {
+    marginPercent = round((marginAmount / lineTotal) * 100);
+  }
+
+  return {
+    quantity: qty,
+    unitPrice: price,
+    unitCost: cost,
+    discountPercent: discPct,
+    grossTotal,
+    discountAmount,
+    lineTotal,
+    totalCost,
+    marginAmount,
+    marginPercent,
+  };
+}
+
+// Aliases for compatibility across tracks
+export const toNum = toNumber;
+export const round2 = round;
+export const round4 = (val) => round(val, 4);
+
+export default {
+  toNumber,
+  toNum,
+  round,
+  round2,
+  round4,
+  mul,
+  div,
+  pct,
+  marginPct,
+  add,
+  sub,
+  calculateLineMath,
+};
