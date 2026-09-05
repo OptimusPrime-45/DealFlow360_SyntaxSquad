@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext.js";
 import { Button, Card, Badge } from "../components/ui/index.js";
+
 
 export default function HomePage() {
   const router = useRouter();
@@ -110,13 +112,24 @@ export default function HomePage() {
             subtitle="Catalog, Customers, Tiers, and Line Math"
           >
             <p className="text-xs text-[#6C757D] mb-4">
-              Authentication active with dual JWT tokens. Next modules: Customer
-              Tiers, Products & Variants, Price Lists, and the interactive Quote Builder.
+              Catalog and Customer data active with live line math, ceiling resolution, and margin calculation.
             </p>
-            <div className="flex gap-2">
-              <Badge variant="neutral" size="sm">Auth Ready</Badge>
-              <Badge variant="neutral" size="sm">JWT + Refresh</Badge>
-              <Badge variant="neutral" size="sm">Role Guarded</Badge>
+            <div className="flex items-center gap-2 mb-4">
+              <Link href="/quotations">
+                <Button variant="primary" size="sm" className="text-xs font-semibold">
+                  Quotations Pipeline
+                </Button>
+              </Link>
+              <Link href="/quotations/new">
+                <Button variant="secondary" size="sm" className="text-xs font-medium">
+                  + New Quote
+                </Button>
+              </Link>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <Badge variant="success" size="sm">Catalog Ready</Badge>
+              <Badge variant="success" size="sm">Quote Builder</Badge>
+              <Badge variant="neutral" size="sm">Margin Engine</Badge>
             </div>
           </Card>
 

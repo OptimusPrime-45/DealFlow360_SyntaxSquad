@@ -8,6 +8,10 @@ import ordersRoutes from "./routes/orders.routes.js";
 import fulfillmentRoutes from "./routes/fulfillment.routes.js";
 import subscriptionsRoutes from "./routes/subscriptions.routes.js";
 import authRouter from "./routes/auth.routes.js";
+import customerRouter from "./routes/customer.routes.js";
+import tierRouter from "./routes/tier.routes.js";
+import catalogRouter from "./routes/catalog.routes.js";
+import quotationRouter from "./routes/quotation.routes.js";
 import governanceRouter from "./routes/governance.routes.js";
 import approvalRouter from "./routes/approval.routes.js";
 import auditRouter from "./routes/audit.routes.js";
@@ -56,6 +60,12 @@ app.use(
   subscriptionsRoutes
 );
 
+// Mount modular routes
+app.use("/api/auth", authRouter);
+app.use("/api/customers", customerRouter);
+app.use("/api/customer-tiers", tierRouter);
+app.use("/api/quotations", quotationRouter);
+app.use("/api", catalogRouter);
 // Handle unknown routes.
 app.use(
   (req, res) => {
