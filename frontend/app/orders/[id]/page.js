@@ -180,7 +180,7 @@ export default function OrderDetailPage() {
                         value={payAmount[inv.id] ?? ""}
                         placeholder={outstanding.toFixed(2)}
                         onChange={(e) => setPayAmount((p) => ({ ...p, [inv.id]: e.target.value }))}
-                        className="w-28 px-2 py-1 text-sm border border-[#DEE2E6] rounded-[4px]"
+                        className="w-28 px-2 py-1 text-sm bg-white text-[#212529] border border-[#CED4DA] rounded-[4px] focus:border-[#714B67] focus:outline-none placeholder:text-[#868E96]"
                       />
                       <Button
                         variant="primary" size="sm" className="text-xs" disabled={busy}

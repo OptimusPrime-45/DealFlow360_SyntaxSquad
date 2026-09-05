@@ -84,6 +84,7 @@ export default function DiscountRulesPage() {
   return (
     <>
       <AdminHeader
+        section="Governance"
         title="Discount Rules"
         description="Per-category ceilings layered on top of the tier ceiling. Where several rules match a line, the strictest one wins."
       />

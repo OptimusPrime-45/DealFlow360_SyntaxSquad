@@ -124,6 +124,7 @@ export default function ApprovalLadderPage() {
   return (
     <>
       <AdminHeader
+        section="Governance"
         title="Approval Ladder"
         description="An ordered list of rungs of any length. A quotation activates every rung whose trigger it crosses — adding a third approver is a row, not a deploy."
       />
@@ -148,21 +149,16 @@ export default function ApprovalLadderPage() {
           <div className="flex items-center gap-2 mb-4">
             <span className="text-sm font-semibold text-[#212529]">{active.name}</span>
             <Badge variant={active.isActive ? "success" : "neutral"} size="sm">
-              {active.isActive ? "active" : "inactive"}
+              {active.isActive ? "Active policy" : "Inactive"}
             </Badge>
           </div>
 
           {equalThresholds.length > 0 && (
-            <div className="mb-4 bg-[#FFF4E5] border border-[#FD7E14]/30 rounded-[8px] px-4 py-3">
-              <div className="text-sm font-semibold text-[#7A4100]">
-                {equalThresholds.length} rung{equalThresholds.length > 1 ? "s have" : " has"} both
-                thresholds set to the same value
-              </div>
-              <div className="text-xs text-[#7A4100]/80 mt-1">
-                The blended trigger is effectively switched off there: a quotation reaching blended
-                ≥ N has almost certainly already tripped worst-line ≥ N. Set the blended threshold
-                lower so a spread of small violations still routes.
-              </div>
+            <div className="mb-4 bg-[#FFF4E5] border border-[#FD7E14]/30 rounded-[8px] p-3 text-xs text-[#7A4100]">
+              <strong>Rung {equalThresholds.map((s) => s.stepOrder).join(", ")}</strong> has
+              equal blended and worst-line thresholds. The blended trigger is inert: anything
+              crossing it has almost certainly tripped the worst-line trigger already. Lower the
+              blended threshold if you want many small violations to route.
             </div>
           )}
 
@@ -175,9 +171,10 @@ export default function ApprovalLadderPage() {
                 onChange={(v) => setNewStep((s) => ({ ...s, roleId: v }))}
               />
               <Field
-                label="Order" type="number" required min={1}
+                label="Step order" type="number" required min={1}
                 value={newStep.stepOrder}
                 onChange={(v) => setNewStep((s) => ({ ...s, stepOrder: v }))}
+                hint="Order of review"
               />
               <Field
                 label="Min blended score" type="number" min={0} step="0.5"
@@ -186,7 +183,7 @@ export default function ApprovalLadderPage() {
                 hint="Blank = never fires on this"
               />
               <Field
-                label="Min worst line (pts)" type="number" min={0} step="0.5"
+                label="Min worst line" type="number" min={0} step="0.5"
                 value={newStep.minWorstLineOverage}
                 onChange={(v) => setNewStep((s) => ({ ...s, minWorstLineOverage: v }))}
                 hint="Blank = never fires on this"
@@ -224,7 +221,7 @@ export default function ApprovalLadderPage() {
                           updateStep(s.id, { [key]: next }, `Rung ${s.stepOrder} updated`);
                         }
                       }}
-                      className="w-24 px-2 py-1 text-sm border border-[#DEE2E6] rounded-[4px]"
+                      className="w-24 h-9 px-2.5 text-xs bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] outline-none focus:border-[#714B67] focus:ring-2 focus:ring-[#F3EEF2] placeholder:text-[#868E96] transition-all"
                     />
                   </td>
                 ))}

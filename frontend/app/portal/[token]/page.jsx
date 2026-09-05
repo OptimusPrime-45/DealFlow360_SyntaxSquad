@@ -532,7 +532,7 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
                   <select
                     value={selectedLineId}
                     onChange={(e) => setSelectedLineId(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#714B67] focus:outline-none"
+                    className="w-full rounded-lg bg-white border border-[#CED4DA] p-2.5 text-sm text-[#212529] focus:border-[#714B67] focus:outline-none"
                   >
                     {quotation?.lines?.map((line) => (
                       <option key={line.id} value={line.id}>
@@ -551,7 +551,7 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
                     <select
                       value={requestType}
                       onChange={(e) => setRequestType(e.target.value)}
-                      className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#714B67] focus:outline-none"
+                      className="w-full rounded-lg bg-white border border-[#CED4DA] p-2.5 text-sm text-[#212529] focus:border-[#714B67] focus:outline-none"
                     >
                       <option value="DISCOUNT">Discount Revision (%)</option>
                       <option value="QUANTITY">Quantity Revision</option>
@@ -573,7 +573,7 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
                         value={proposedDiscount}
                         onChange={(e) => setProposedDiscount(e.target.value)}
                         required
-                        className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#714B67] focus:outline-none"
+                        className="w-full rounded-lg bg-white border border-[#CED4DA] p-2.5 text-sm text-[#212529] placeholder:text-[#868E96] focus:border-[#714B67] focus:outline-none"
                       />
                     </div>
                   )}
@@ -591,7 +591,7 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
                         value={proposedQty}
                         onChange={(e) => setProposedQty(e.target.value)}
                         required
-                        className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#714B67] focus:outline-none"
+                        className="w-full rounded-lg bg-white border border-[#CED4DA] p-2.5 text-sm text-[#212529] placeholder:text-[#868E96] focus:border-[#714B67] focus:outline-none"
                       />
                     </div>
                   )}
@@ -608,7 +608,7 @@ export default function CustomerPortalPage({ token: tokenProp, quotationId: quot
                     onChange={(e) => setNegotiationMessage(e.target.value)}
                     placeholder="Provide context for your request (e.g. bulk order, budget constraints)..."
                     required
-                    className="w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#714B67] focus:outline-none"
+                    className="w-full rounded-lg bg-white border border-[#CED4DA] p-2.5 text-sm text-[#212529] placeholder:text-[#868E96] focus:border-[#714B67] focus:outline-none"
                   ></textarea>
                 </div>
 

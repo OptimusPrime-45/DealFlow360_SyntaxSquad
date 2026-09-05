@@ -13,6 +13,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import apiClient from "../../lib/apiClient.js";
 import { Card, Badge } from "../../components/ui/index.js";
+import { AdminHeader } from "../../components/admin/AdminUI.jsx";
 
 // Most endpoints wrap their payload in a named key, but a few
 // (/governance/discount-rules, /approvals/policies) return a bare array.
@@ -132,35 +133,38 @@ export default function AdminOverviewPage() {
 
   return (
     <>
-      <div className="mb-5">
-        <h1 className="text-xl font-bold text-[#212529]">Configuration Overview</h1>
-        <p className="text-sm text-[#6C757D] mt-1 max-w-2xl">
-          Everything the deal engine reads at runtime. Changes take effect on the next quotation —
-          no restart, no deploy.
-        </p>
-      </div>
+      <AdminHeader
+        section="Overview"
+        title="Configuration Overview"
+        description="Everything the deal engine reads at runtime. Changes take effect on the next quotation with zero downtime or restart."
+      />
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
-        <Card padding="p-4">
-          <div className="text-[11px] uppercase tracking-wide text-[#6C757D]">Scoring strategy</div>
-          <div className="text-base font-bold text-[#212529] mt-1">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
+        <Card padding="p-5">
+          <div className="text-xs font-semibold uppercase tracking-wider text-[#6C757D]">Scoring strategy</div>
+          <div className="text-xl font-bold text-[#212529] mt-2 capitalize">
             {state.settings?.scoreStrategy?.replace(/_/g, " ").toLowerCase() || "—"}
           </div>
+          <div className="text-[11px] text-[#6C757D] mt-1">Active deal evaluation formula</div>
         </Card>
-        <Card padding="p-4">
-          <div className="text-[11px] uppercase tracking-wide text-[#6C757D]">Unconfigured pairs</div>
-          <div className="text-base font-bold text-[#212529] mt-1">
+        <Card padding="p-5">
+          <div className="text-xs font-semibold uppercase tracking-wider text-[#6C757D]">Unconfigured pairs</div>
+          <div className="text-xl font-bold text-[#714B67] mt-2">
             {state.settings?.unconfiguredCeilingPolicy || "—"}
           </div>
+          <div className="text-[11px] text-[#6C757D] mt-1">Fallback policy on missing rules</div>
         </Card>
-        <Card padding="p-4">
-          <div className="text-[11px] uppercase tracking-wide text-[#6C757D]">Readiness</div>
+        <Card padding="p-5">
+          <div className="text-xs font-semibold uppercase tracking-wider text-[#6C757D]">System Readiness</div>
           <div
-            className={`text-base font-bold mt-1 ${
+            className={`text-xl font-bold mt-2 ${
               failing.length === 0 ? "text-[#28A745]" : "text-[#FD7E14]"
             }`}
           >
             {checks.length - failing.length} of {checks.length} ready
+          </div>
+          <div className="text-[11px] text-[#6C757D] mt-1">
+            {failing.length === 0 ? "All pipeline components configured" : `${failing.length} step(s) need attention`}
           </div>
         </Card>
       </div>

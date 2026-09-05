@@ -94,6 +94,7 @@ export default function ProductsPage() {
   return (
     <>
       <AdminHeader
+        section="Catalogue"
         title="Products"
         description="Cost price is the only source of margin in the system — every margin figure the rep and the approver see derives from it."
       />

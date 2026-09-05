@@ -63,6 +63,7 @@ export default function UpsellRulesPage() {
   return (
     <>
       <AdminHeader
+        section="Catalogue"
         title="Upsell Rules"
         description="Co-purchase pairings shown to the rep while building a quote. When a source product is on the quotation, its paired products are suggested."
       />
