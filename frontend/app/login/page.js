@@ -131,7 +131,13 @@ export default function LoginPage() {
                   <option value="SALES_REP">Sales Representative</option>
                   <option value="SALES_MANAGER">Sales Manager</option>
                   <option value="FINANCE">Finance / Ops</option>
-                  <option value="ADMIN">System Administrator</option>
+                  {/*
+                    ADMIN is deliberately absent. Self-service signup as ADMIN
+                    would let anyone reaching this page grant themselves every
+                    discount ceiling, the approval ladder and the whole config
+                    surface. The API refuses it too (403) — this only keeps the
+                    UI honest about what it will accept.
+                  */}
                 </select>
               </div>
             </>
@@ -165,6 +171,10 @@ export default function LoginPage() {
             {mode === "login" ? "Sign In to Workspace" : "Complete Registration"}
           </Button>
         </form>
+
+        <p className="text-[11px] text-[#6C757D] text-center mt-4">
+          Are you a customer? <a href="/portal/login" className="text-[#714B67] font-medium underline">Sign in to the customer portal</a> — this page is for internal staff.
+        </p>
 
         {/* Demo Quick-Select Bar */}
         <div className="mt-8 pt-5 border-t border-[#E9ECEF]">

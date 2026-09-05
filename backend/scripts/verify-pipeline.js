@@ -362,12 +362,24 @@ async function run() {
   const plan = await api(`/api/fulfillment/orders/${order.id}/plan`, { token: repToken });
   check(plan.ok, "Fulfillment plan computed from live stock");
 
-  const allocated = await api(`/api/fulfillment/orders/${order.id}/allocate`, {
+  // PDF §3 puts warehouse splits and backorder decisions with Finance / Ops,
+  // and the API enforces that — a rep gets 403 here.
+  const repCannotAllocate = await api(`/api/fulfillment/orders/${order.id}/allocate`, {
     method: "POST",
     token: repToken,
     body: {},
   });
-  check(allocated.ok, "Allocation accepted");
+  check(
+    repCannotAllocate.status === 403,
+    "A Sales Rep cannot allocate stock — fulfillment is a Finance/Ops decision (§3)"
+  );
+
+  const allocated = await api(`/api/fulfillment/orders/${order.id}/allocate`, {
+    method: "POST",
+    token: financeToken,
+    body: {},
+  });
+  check(allocated.ok, "Finance accepted the allocation");
 
   const allocations = await prisma.fulfillmentAllocation.findMany({
     where: { orderId: order.id },
@@ -432,7 +444,7 @@ async function run() {
 
   await api(`/api/fulfillment/orders/${boOrder.id}/allocate`, {
     method: "POST",
-    token: repToken,
+    token: financeToken,
     body: {},
   });
 

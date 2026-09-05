@@ -13,6 +13,14 @@ const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY = "7d";
 
 // Zod schemas for input validation
+// Roles a person may give THEMSELVES at signup.
+//
+// ADMIN is excluded on purpose: self-service signup as ADMIN would let anyone
+// who can reach the page grant themselves every discount ceiling, the approval
+// ladder and the whole configuration surface. Privileged roles are granted by
+// an existing admin, or seeded.
+export const SELF_SERVICE_ROLES = ["SALES_REP", "SALES_MANAGER", "FINANCE"];
+
 const registerSchema = z.object({
   email: z.string().email("Please provide a valid email address"),
   password: z.string().min(6, "Password must be at least 6 characters long"),
@@ -81,6 +89,26 @@ const formatUser = (user) => ({
 export const registerUser = asyncHandler(async (req, res) => {
   const validated = registerSchema.parse(req.body);
   const normalizedEmail = validated.email.toLowerCase().trim();
+
+  // A privileged role may only be granted by someone who already holds it.
+  // The route is public, so req.user is set only when a signed-in admin is
+  // creating the account on someone else's behalf.
+  if (!SELF_SERVICE_ROLES.includes(validated.roleCode)) {
+    const grantedByAdmin = req.user?.role?.code === "ADMIN";
+
+    if (!grantedByAdmin) {
+      // Exception: the very first account has to be able to bootstrap the
+      // system, so an ADMIN is allowed while no users exist at all.
+      const userCount = await prisma.user.count();
+
+      if (userCount > 0) {
+        throw new ApiError(
+          403,
+          `The ${validated.roleCode} role cannot be self-assigned. Ask an administrator to create this account.`
+        );
+      }
+    }
+  }
 
   // Check duplicate email
   const existingUser = await prisma.user.findUnique({

@@ -8,7 +8,7 @@ import {
     cancelSubscription
 } from "../controllers/subscriptions.controller.js";
 
-import { authenticate } from "../middleware/auth.middleware.js";
+import { authenticate, requireRole } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
 
@@ -16,11 +16,18 @@ const router = express.Router();
 // These endpoints were previously reachable with no authentication at all.
 router.use(authenticate);
 
+// PDF §3 — Finance / Operations "manages warehouse fulfillment splits and
+// backorder decisions". Reps may READ progress on their own deals; acting on
+// fulfillment and billing is an operations decision.
+const canOperate = requireRole("ADMIN", "FINANCE", "SALES_MANAGER");
+
+
 
 // Create subscriptions and billing schedules
 // for recurring lines in an order.
 router.post(
     "/orders/:orderId/create",
+    canOperate,
     async (req, res) => {
         try {
             const result =
@@ -82,6 +89,7 @@ router.get(
 // Cancel a subscription.
 router.post(
     "/:subscriptionId/cancel",
+    canOperate,
     async (req, res) => {
         try {
             const result =

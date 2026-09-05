@@ -227,6 +227,14 @@ async function main() {
   }
   console.log("✔ Customers seeded");
 
+  // Portal credentials so customers can sign in themselves (PDF §4-A1), not
+  // only through a magic link a rep has to mint and deliver by hand.
+  const portalPasswordHash = await bcrypt.hash("Portal123!", 10);
+  await prisma.customer.updateMany({
+    data: { portalPasswordHash },
+  });
+  console.log("✔ Customer portal passwords seeded (all customers: Portal123!)");
+
   // 8. Category Discount Ceilings (DiscountRules matching PDF §10)
   // Gold: Hardware 15%, Services 10%
   // Silver: Hardware 10%, Services 5%

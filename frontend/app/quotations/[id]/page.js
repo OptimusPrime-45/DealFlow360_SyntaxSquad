@@ -41,6 +41,8 @@ export default function QuotationDetailPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [portalLink, setPortalLink] = useState(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) router.push("/login");
@@ -106,6 +108,43 @@ export default function QuotationDetailPage() {
     }
   };
 
+  /**
+   * Mint a customer portal link (§9 step 7).
+   *
+   * Nothing in the UI could do this before, so demonstrating the customer
+   * negotiation flow meant calling the API by hand. Email delivery is a stated
+   * non-goal, so the link is shown here to be copied and sent however you like.
+   */
+  const sendToCustomer = async () => {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    setCopied(false);
+    try {
+      const res = await apiClient.post(`/quotations/${id}/portal-link`, {
+        expiresInDays: 7,
+      });
+      const token = res.token || res.portalToken?.token;
+      setPortalLink(`${window.location.origin}/portal/${token}`);
+      setNotice("Customer link created. It opens this quotation only, and expires in 7 days.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(portalLink);
+      setCopied(true);
+    } catch {
+      // Clipboard can be blocked; the link is selectable on screen regardless.
+      setCopied(false);
+    }
+  };
+
   const submit = async () => {
     setBusy(true);
     setNotice("");
@@ -166,6 +205,11 @@ export default function QuotationDetailPage() {
           <Badge variant={STATUS_VARIANT[quotation.status] || "neutral"} size="md">
             {quotation.status.replace(/_/g, " ")}
           </Badge>
+          {!["DRAFT"].includes(quotation.status) && (
+            <Button variant="secondary" size="sm" onClick={sendToCustomer} disabled={busy}>
+              Send to Customer
+            </Button>
+          )}
           {quotation.order && (
             <Link href={`/orders/${quotation.order.id}`}>
               <Button variant="secondary" size="sm">Fulfillment &amp; Billing</Button>
@@ -188,6 +232,33 @@ export default function QuotationDetailPage() {
         {error && (
           <div className="bg-[#FDECEA] border border-[#DC3545]/30 text-[#842029] text-sm rounded-[8px] px-4 py-3">
             {error}
+          </div>
+        )}
+
+        {portalLink && (
+          <div className="bg-white border border-[#714B67]/30 rounded-[8px] p-4">
+            <div className="text-sm font-semibold text-[#212529] mb-1">
+              Customer portal link
+            </div>
+            <p className="text-xs text-[#6C757D] mb-3">
+              Send this to {quotation.customer?.contactEmail || "your customer"}. It is signed with
+              a separate key and gives access to this one quotation — it cannot open anything else
+              in the system.
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                value={portalLink}
+                onFocus={(e) => e.target.select()}
+                className="flex-1 px-3 py-2 text-xs font-mono border border-[#DEE2E6] rounded-[6px] bg-[#F8F9FA]"
+              />
+              <Button variant="secondary" size="sm" className="text-xs" onClick={copyLink}>
+                {copied ? "Copied" : "Copy"}
+              </Button>
+              <a href={portalLink} target="_blank" rel="noreferrer">
+                <Button variant="primary" size="sm" className="text-xs">Open</Button>
+              </a>
+            </div>
           </div>
         )}
 

@@ -8,13 +8,19 @@ import {
     getOrderAllocations
 } from "../controllers/fulfillment.controller.js";
 
-import { authenticate } from "../middleware/auth.middleware.js";
+import { authenticate, requireRole } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
 
 // This router owns its mount path, so a blanket guard is safe.
 // These endpoints were previously reachable with no authentication at all.
 router.use(authenticate);
+
+// PDF §3 — Finance / Operations "manages warehouse fulfillment splits and
+// backorder decisions". Reps may READ progress on their own deals; acting on
+// fulfillment and billing is an operations decision.
+const canOperate = requireRole("ADMIN", "FINANCE", "SALES_MANAGER");
+
 
 
 // Get the recommended fulfillment plan.
@@ -49,6 +55,7 @@ router.get(
 // Accept and save the recommended fulfillment plan.
 router.post(
     "/orders/:orderId/allocate",
+    canOperate,
     async (req, res) => {
         try {
             const result =

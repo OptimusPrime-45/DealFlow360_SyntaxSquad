@@ -10,15 +10,21 @@ export const errorHandler = (err, req, res, next) => {
   let statusCode = err.statusCode || 500;
   let message = err.message || "Internal Server Error";
   let code = err.code || "INTERNAL_SERVER_ERROR";
-  let errors = err.errors || [];
+  let errors = err.issues || err.errors || [];
 
-  // Handle Zod validation errors
+  // Handle Zod validation errors.
+  //
+  // zod v4 renamed the issue list from `.errors` to `.issues`. Reading the old
+  // name gave `undefined.map(...)`, which threw INSIDE this handler — so Express
+  // fell through to its default HTML error page and EVERY validation failure in
+  // the API answered 500 text/html instead of a readable 400 JSON. Accept both.
   if (err instanceof ZodError) {
     statusCode = 400;
     code = "VALIDATION_ERROR";
     message = "Request validation failed";
-    errors = err.errors.map((e) => ({
-      field: e.path.join("."),
+    const issues = err.issues || err.errors || [];
+    errors = issues.map((e) => ({
+      field: Array.isArray(e.path) ? e.path.join(".") : String(e.path ?? ""),
       message: e.message,
     }));
   }

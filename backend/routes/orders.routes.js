@@ -6,7 +6,7 @@ import {
     confirmQuotationToOrder
 } from "../controllers/orders.controller.js";
 
-import { authenticate } from "../middleware/auth.middleware.js";
+import { authenticate, requireRole } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
 
@@ -18,6 +18,7 @@ router.use(authenticate);
 // Confirm a quotation and create an order.
 router.post(
     "/:quotationId/confirm",
+    requireRole("ADMIN", "SALES_REP", "SALES_MANAGER", "FINANCE"),
     async (req, res) => {
         try {
             const result =

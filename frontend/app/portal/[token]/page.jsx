@@ -16,10 +16,18 @@ import { useParams } from 'next/navigation';
  * - Feature 1: Secure magic link verification & proposal view
  * - Feature 2: Customer counter-offer submission & live negotiation timeline (§9 Step 7)
  */
-export default function CustomerPortalPage() {
-  // Extract token from URL parameters
+export default function CustomerPortalPage({ token: tokenProp, quotationId: quotationIdProp }) {
+  // Two ways in, one view (PDF §4-A1):
+  //   magic link      -> token comes from the URL segment, scoped to ONE quote
+  //   customer login  -> token is the session, and the quote is named explicitly
+  // When a quotationId is supplied the API verifies it belongs to that customer
+  // before attaching it to the session, so this cannot be used to reach another
+  // customer's quotation.
   const params = useParams();
-  const token = params?.token;
+  const token = tokenProp || params?.token;
+  const quotationId = quotationIdProp || null;
+  const quoteQuery = quotationId ? `?quotationId=${encodeURIComponent(quotationId)}` : '';
+  const isLinkSession = !tokenProp;
 
   // Component state
   const [loading, setLoading] = useState(true);
@@ -53,7 +61,11 @@ export default function CustomerPortalPage() {
       setError(null);
 
       // Step 1: Verify token freshness and revocation state
-      const verifyRes = await fetch(`${API_URL}/api/portal/verify/${token}`);
+      // /verify/:token validates a magic link. A credential session has no
+      // PortalToken row to verify, so it is skipped.
+      const verifyRes = isLinkSession
+        ? await fetch(`${API_URL}/api/portal/verify/${token}`)
+        : { ok: true, json: async () => ({}) };
       const verifyData = await verifyRes.json();
 
       if (!verifyRes.ok) {
@@ -61,7 +73,7 @@ export default function CustomerPortalPage() {
       }
 
       // Step 2: Fetch quotation details with Bearer token
-      const quoteRes = await fetch(`${API_URL}/api/portal/quote`, {
+      const quoteRes = await fetch(`${API_URL}/api/portal/quote${quoteQuery}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -80,7 +92,7 @@ export default function CustomerPortalPage() {
       }
 
       // Step 3: Fetch active negotiation timeline
-      const negRes = await fetch(`${API_URL}/api/portal/negotiations`, {
+      const negRes = await fetch(`${API_URL}/api/portal/negotiations${quoteQuery}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -121,7 +133,7 @@ export default function CustomerPortalPage() {
         payload.proposedQuantity = Number(proposedQty);
       }
 
-      const res = await fetch(`${API_URL}/api/portal/negotiate`, {
+      const res = await fetch(`${API_URL}/api/portal/negotiate${quoteQuery}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

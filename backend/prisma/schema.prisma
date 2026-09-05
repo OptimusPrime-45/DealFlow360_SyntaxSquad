@@ -282,6 +282,13 @@ model Customer {
   ownerRep       User?        @relation("CustomerOwner", fields: [ownerRepId], references: [id], onDelete: SetNull)
 
   isActive      Boolean        @default(true) @map("is_active")
+
+  /// Optional portal credential. PDF §4-A1 allows customers in by magic link
+  /// OR by email and password; this enables the second route. Null means the
+  /// customer can only be reached by a link a rep mints for them.
+  portalPasswordHash String?   @map("portal_password_hash")
+  portalLastLoginAt  DateTime? @map("portal_last_login_at")
+
   quotations    Quotation[]
   orders        Order[]
   subscriptions Subscription[]
