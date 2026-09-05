@@ -120,7 +120,19 @@ export function calculateOrderStatus(
             return "PARTIALLY_SHIPPED";
         }
 
+        // Outstanding backorder is reported at order level. Reporting this as
+        // ALLOCATED would make an order with units nobody can ship yet look
+        // identical to one that is fully reserved and ready to go.
+        if (hasBackorder) {
+            return "BACKORDERED";
+        }
+
         return "ALLOCATED";
+    }
+
+    // Nothing could be reserved anywhere — the whole order is on backorder.
+    if (hasBackorder) {
+        return "BACKORDERED";
     }
 
     // Some but not all of the order has been fulfilled.

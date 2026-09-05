@@ -132,6 +132,10 @@ enum RequestStatus {
 enum OrderStatus {
   PENDING_FULFILLMENT
   ALLOCATED
+  /// Some quantity could not be sourced from any warehouse and is on backorder.
+  /// Distinct from ALLOCATED: an order with units nobody can ship yet is not
+  /// the same as one that is fully reserved and ready to go.
+  BACKORDERED
   PARTIALLY_SHIPPED
   SHIPPED
   COMPLETED

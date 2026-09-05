@@ -417,3 +417,66 @@ export async function allocateOrder(
 
     return result;
 }
+
+/**
+ * Read the allocation that was actually SAVED for an order.
+ *
+ * Distinct from getFulfillmentPlan(), which recomputes a suggestion against
+ * CURRENT stock. Once an order is allocated its stock is reserved, so replanning
+ * finds nothing available and would report the whole order as backordered — the
+ * opposite of the truth. The fulfillment screen must read this instead.
+ */
+export async function getOrderAllocations(orderId) {
+    if (typeof orderId !== "string" || orderId.trim().length === 0) {
+        throw new Error("orderId is required");
+    }
+
+    const order = await prisma.order.findUnique({
+        where: { id: orderId },
+        select: { id: true, orderNumber: true, status: true }
+    });
+
+    if (!order) {
+        throw new Error("Order not found");
+    }
+
+    const allocations = await prisma.fulfillmentAllocation.findMany({
+        where: { orderId },
+        include: {
+            warehouse: { select: { id: true, code: true, name: true, shippingWeight: true } },
+            orderLine: {
+                select: {
+                    id: true,
+                    quantity: true,
+                    product: { select: { id: true, sku: true, name: true } }
+                }
+            }
+        },
+        orderBy: [{ createdAt: "asc" }]
+    });
+
+    // Shipment count is the number of DISTINCT warehouses involved; a backorder
+    // row carries no warehouse and therefore is not a shipment.
+    const shipmentWarehouses = new Set(
+        allocations.filter((a) => a.warehouseId).map((a) => a.warehouseId)
+    );
+
+    const totalAllocated = allocations.reduce((sum, a) => sum + a.allocatedQty, 0);
+    const totalBackordered = allocations.reduce((sum, a) => sum + a.backorderQty, 0);
+    const totalShippingCost = allocations.reduce(
+        (sum, a) => sum + Number(a.shippingCost || 0),
+        0
+    );
+
+    return {
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        allocations,
+        shipmentCount: shipmentWarehouses.size,
+        totalAllocated,
+        totalBackordered,
+        totalShippingCost,
+        hasBackorder: totalBackordered > 0
+    };
+}

@@ -81,6 +81,43 @@ async function run() {
     return finish();
   }
 
+  // §9 step 1 opens with "Sign up OR log in", so the signup path is exercised
+  // too — a fresh rep registering and immediately being able to work.
+  const newRepEmail = `verify.rep.${Date.now().toString().slice(-8)}@dealflow360.com`;
+  const signup = await api("/api/auth/register", {
+    method: "POST",
+    body: {
+      email: newRepEmail,
+      password: "Password123!",
+      fullName: "Verification Rep",
+      roleCode: "SALES_REP",
+    },
+  });
+  check(signup.status === 201, `A new sales rep can sign up (${newRepEmail})`);
+
+  const signedUpToken =
+    signup.data?.data?.accessToken ||
+    signup.data?.data?.token ||
+    (await login(newRepEmail));
+  check(!!signedUpToken, "Signup returns a usable session immediately");
+
+  const whoAmI = await api("/api/auth/me", { token: signedUpToken });
+  check(
+    whoAmI.status === 200 && whoAmI.data?.data?.user?.email === newRepEmail,
+    "The newly signed-up rep is authenticated and can read their own profile"
+  );
+
+  const duplicate = await api("/api/auth/register", {
+    method: "POST",
+    body: {
+      email: newRepEmail,
+      password: "Password123!",
+      fullName: "Duplicate",
+      roleCode: "SALES_REP",
+    },
+  });
+  check(duplicate.status === 409, "Signing up twice with the same email is refused");
+
   // Discount tier — a ceiling the admin owns.
   const tiers = (await api("/api/customer-tiers", { token: adminToken })).data?.data;
   const tierList = tiers?.tiers || tiers?.customerTiers || tiers || [];
@@ -352,6 +389,80 @@ async function run() {
   check(
     totalAllocated + totalBackordered === LAPTOP_QTY,
     `Allocated ${totalAllocated} + backordered ${totalBackordered} = ordered ${LAPTOP_QTY}`
+  );
+
+  // ── Backorder branch: order MORE than exists anywhere ──────────────────────
+  // The split above allocates fully. This proves the other path: quantity that
+  // no warehouse can source is recorded rather than silently dropped.
+  const SERVER_TOTAL = 4; // seeded: WH-MAIN 0, WH-EAST 4
+  const SERVER_ORDER = 6; // two more than exist anywhere
+
+  const serverProduct = bySku["HW-SERVER-2U"];
+  for (const [wh, qty] of [[main, 0], [east, SERVER_TOTAL]]) {
+    await api(`/api/warehouses/${wh.id}/inventory`, {
+      method: "PUT",
+      token: adminToken,
+      body: { productId: serverProduct.id, availableQty: qty, reservedQty: 0, reorderLevel: 2 },
+    });
+  }
+
+  const boQuote = (
+    await api("/api/quotations", {
+      method: "POST",
+      token: repToken,
+      body: {
+        customerId: goldCustomer.id,
+        lines: [{ productId: serverProduct.id, quantity: SERVER_ORDER, discountPercent: 5 }],
+      },
+    })
+  ).data?.data?.quotation;
+
+  await api(`/api/quotations/${boQuote.id}/submit`, { method: "POST", token: repToken, body: {} });
+  const boOrder = (
+    await api(`/api/orders/${boQuote.id}/confirm`, { method: "POST", token: repToken, body: {} })
+  ).data?.data?.order;
+
+  const boPlan = await api(`/api/fulfillment/orders/${boOrder.id}/plan`, { token: repToken });
+  const boLinePlan = boPlan.data?.data?.lines?.[0];
+  check(
+    boLinePlan?.backorderQuantity === SERVER_ORDER - SERVER_TOTAL &&
+      boLinePlan?.isFullyAllocated === false,
+    `Plan reports ${boLinePlan?.backorderQuantity} of ${SERVER_ORDER} on backorder, not fully allocated`
+  );
+
+  await api(`/api/fulfillment/orders/${boOrder.id}/allocate`, {
+    method: "POST",
+    token: repToken,
+    body: {},
+  });
+
+  const boAllocs = await prisma.fulfillmentAllocation.findMany({
+    where: { orderId: boOrder.id },
+    include: { warehouse: true },
+  });
+  const backorderRow = boAllocs.find((a) => a.warehouseId === null);
+
+  check(
+    !!backorderRow && backorderRow.backorderQty === SERVER_ORDER - SERVER_TOTAL,
+    `Backorder persisted as a row with no warehouse (qty ${backorderRow?.backorderQty})`,
+    boAllocs.map((a) => `${a.warehouse?.code || "BACKORDER"}: alloc=${a.allocatedQty} back=${a.backorderQty}`).join("  ")
+  );
+  check(
+    backorderRow?.status === "BACKORDERED",
+    `Backorder row is marked ${backorderRow?.status}`
+  );
+
+  const boAllocated = boAllocs.reduce((s2, a) => s2 + a.allocatedQty, 0);
+  const boBackordered = boAllocs.reduce((s2, a) => s2 + a.backorderQty, 0);
+  check(
+    boAllocated === SERVER_TOTAL && boAllocated + boBackordered === SERVER_ORDER,
+    `Sourced ${boAllocated} of ${SERVER_ORDER}; the remaining ${boBackordered} is on backorder, nothing lost`
+  );
+
+  const boOrderRow = await prisma.order.findUnique({ where: { id: boOrder.id } });
+  check(
+    boOrderRow.status === "BACKORDERED",
+    `Order status is ${boOrderRow.status}, distinguishable from a fully-reserved ALLOCATED order`
   );
 
   // ==========================================================================

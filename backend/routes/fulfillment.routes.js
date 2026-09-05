@@ -4,7 +4,8 @@ import express from "express";
 
 import {
     getFulfillmentPlan,
-    allocateOrder
+    allocateOrder,
+    getOrderAllocations
 } from "../controllers/fulfillment.controller.js";
 
 import { authenticate } from "../middleware/auth.middleware.js";
@@ -71,6 +72,20 @@ router.post(
                 success: false,
                 message: error.message
             });
+        }
+    }
+);
+
+
+// What was actually saved for this order (as opposed to a fresh suggestion).
+router.get(
+    "/orders/:orderId/allocations",
+    async (req, res) => {
+        try {
+            const result = await getOrderAllocations(req.params.orderId);
+            return res.status(200).json({ success: true, data: result });
+        } catch (error) {
+            return res.status(400).json({ success: false, message: error.message });
         }
     }
 );

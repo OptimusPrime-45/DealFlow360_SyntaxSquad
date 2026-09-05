@@ -32,6 +32,7 @@ export default function OrderDetailPage() {
   const { isAuthenticated, loading: authLoading } = useAuth();
 
   const [plan, setPlan] = useState(null);
+  const [saved, setSaved] = useState(null);
   const [subs, setSubs] = useState(null);
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -48,12 +49,18 @@ export default function OrderDetailPage() {
     setError("");
     // Each of these can legitimately be absent until the matching action has
     // been run, so a failure on one must not blank the whole page.
-    const [p, s, inv] = await Promise.all([
+    const [p, a, s, inv] = await Promise.all([
       apiClient.get(`/fulfillment/orders/${id}/plan`).catch(() => null),
+      // What was actually SAVED. The plan endpoint recomputes against CURRENT
+      // stock, so once an order is allocated its own stock is reserved and a
+      // fresh plan reports the whole order as backordered - the opposite of the
+      // truth. Persisted allocations win whenever they exist.
+      apiClient.get(`/fulfillment/orders/${id}/allocations`).catch(() => null),
       apiClient.get(`/subscriptions/orders/${id}`).catch(() => null),
       apiClient.get(`/invoices?orderId=${id}`).catch(() => null),
     ]);
     setPlan(p);
+    setSaved(a);
     setSubs(s);
     setInvoices(inv?.invoices || inv || []);
     setLoading(false);
@@ -86,14 +93,52 @@ export default function OrderDetailPage() {
     );
   }
 
-  const allocations = plan?.allocations || plan?.plan || plan?.lines || [];
   const subscriptions = subs?.subscriptions || [];
   const oneTime = invoices.filter((i) => i.invoiceType === "ONE_TIME");
   const recurring = invoices.filter((i) => i.invoiceType === "RECURRING");
 
-  const warehouseCount = new Set(
-    allocations.filter((a) => a.warehouseId || a.warehouse).map((a) => a.warehouseId || a.warehouse?.id)
-  ).size;
+  // Saved allocations if the order has been allocated; otherwise flatten the
+  // suggested plan (nested per order line) into the same row shape.
+  const isSaved = (saved?.allocations || []).length > 0;
+  const rows = isSaved
+    ? saved.allocations.map((a) => ({
+        key: a.id,
+        product: a.orderLine?.product?.name || a.orderLine?.product?.sku,
+        warehouse: a.warehouse?.name || null,
+        allocatedQty: a.allocatedQty,
+        backorderQty: a.backorderQty,
+        shippingCost: a.shippingCost,
+        status: a.status,
+      }))
+    : (plan?.lines || []).flatMap((line, li) => {
+        const out = (line.allocations || []).map((a, ai) => ({
+          key: `${li}-${ai}`,
+          product: line.productName || line.productId,
+          warehouse: a.warehouseName,
+          allocatedQty: a.quantity,
+          backorderQty: 0,
+          shippingCost: 0,
+          status: "PLANNED",
+        }));
+        if (line.backorderQuantity > 0) {
+          out.push({
+            key: `${li}-backorder`,
+            product: line.productName || line.productId,
+            warehouse: null,
+            allocatedQty: 0,
+            backorderQty: line.backorderQuantity,
+            shippingCost: 0,
+            status: "BACKORDERED",
+          });
+        }
+        return out;
+      });
+
+  const warehouseCount = isSaved
+    ? saved.shipmentCount
+    : new Set(rows.filter((r) => r.warehouse).map((r) => r.warehouse)).size;
+  const backorderTotal = rows.reduce((acc, r) => acc + Number(r.backorderQty || 0), 0);
+  const orderStatus = saved?.status || plan?.currentStatus;
 
   const renderInvoices = (list, title, hint) => (
     <Card title={title} subtitle={hint} padding="p-0">
@@ -167,9 +212,27 @@ export default function OrderDetailPage() {
         <div className="flex items-center gap-4">
           <Link href="/quotations" className="text-sm text-[#6C757D] hover:text-[#714B67]">← Pipeline</Link>
           <div>
-            <div className="font-bold text-base text-[#212529]">Order Fulfillment & Billing</div>
-            <div className="text-[11px] text-[#6C757D]">{id}</div>
+            <div className="font-bold text-base text-[#212529]">
+              {saved?.orderNumber || "Order Fulfillment & Billing"}
+            </div>
+            <div className="text-[11px] text-[#6C757D]">Fulfillment &amp; billing</div>
           </div>
+          {orderStatus && (
+            <Badge
+              variant={
+                orderStatus === "BACKORDERED"
+                  ? "danger"
+                  : orderStatus === "SHIPPED" || orderStatus === "COMPLETED"
+                    ? "success"
+                    : orderStatus === "PARTIALLY_SHIPPED"
+                      ? "warning"
+                      : "info"
+              }
+              size="md"
+            >
+              {orderStatus.replace(/_/g, " ")}
+            </Badge>
+          )}
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" className="text-xs" disabled={busy}
@@ -211,35 +274,48 @@ export default function OrderDetailPage() {
               : "Recommended split based on live stock and shipping weight"
           }
         >
-          {allocations.length === 0 ? (
+          {rows.length === 0 ? (
             <p className="text-xs text-[#6C757D]">
               No fulfillment plan yet. Confirm the order first.
             </p>
           ) : (
-            <Table headers={["Product", "Warehouse", "Allocated", "Backorder", "Ship cost", "Status"]}>
-              {allocations.map((a, i) => (
-                <tr key={a.id || i} className="border-t border-[#E9ECEF]">
-                  <td className="px-4 py-3 text-sm">
-                    {a.product?.name || a.orderLine?.product?.name || a.productName || "—"}
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    {a.warehouse?.name || a.warehouseName || (
-                      <Badge variant="warning" size="sm">Backorder</Badge>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm font-semibold">{a.allocatedQty ?? a.quantity ?? 0}</td>
-                  <td className="px-4 py-3 text-sm">
-                    {Number(a.backorderQty) > 0 ? (
-                      <Badge variant="danger" size="sm">{a.backorderQty}</Badge>
-                    ) : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-sm">{money(a.shippingCost)}</td>
-                  <td className="px-4 py-3">
-                    <Badge variant="neutral" size="sm">{a.status || "PLANNED"}</Badge>
-                  </td>
-                </tr>
-              ))}
-            </Table>
+            <>
+              {backorderTotal > 0 && (
+                <div className="mb-3 bg-[#FFF4E5] border border-[#FD7E14]/30 rounded-[6px] px-3 py-2">
+                  <span className="text-sm font-semibold text-[#7A4100]">
+                    {backorderTotal} unit(s) on backorder
+                  </span>
+                  <span className="text-xs text-[#7A4100]/80 ml-2">
+                    no warehouse could source them — recorded, not dropped
+                  </span>
+                </div>
+              )}
+              <Table headers={["Product", "Warehouse", "Allocated", "Backorder", "Ship cost", "Status"]}>
+                {rows.map((r) => (
+                  <tr key={r.key} className="border-t border-[#E9ECEF]">
+                    <td className="px-4 py-3 text-sm">{r.product || "—"}</td>
+                    <td className="px-4 py-3 text-sm">
+                      {r.warehouse || <Badge variant="warning" size="sm">Backorder</Badge>}
+                    </td>
+                    <td className="px-4 py-3 text-sm font-semibold">{r.allocatedQty}</td>
+                    <td className="px-4 py-3 text-sm">
+                      {Number(r.backorderQty) > 0 ? (
+                        <Badge variant="danger" size="sm">{r.backorderQty}</Badge>
+                      ) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-sm">{money(r.shippingCost)}</td>
+                    <td className="px-4 py-3">
+                      <Badge variant={r.status === "BACKORDERED" ? "danger" : "neutral"} size="sm">
+                        {r.status}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </Table>
+              <p className="text-[11px] text-[#6C757D] mt-2">
+                {isSaved ? "Saved allocation for this order." : "Suggested split, not yet accepted."}
+              </p>
+            </>
           )}
         </Card>
 
