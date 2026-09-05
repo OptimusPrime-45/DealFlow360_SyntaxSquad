@@ -198,7 +198,17 @@ export default function QuotationDetailPage() {
           </Link>
           <div>
             <div className="font-bold text-base text-[#212529]">{quotation.quotationNumber}</div>
-            <div className="text-[11px] text-[#6C757D]">{quotation.customer?.name}</div>
+            <div className="text-[11px] text-[#6C757D] flex items-center gap-1.5 flex-wrap">
+              <span>{quotation.customer?.name}</span>
+              {quotation.salesRep && (
+                <>
+                  <span className="text-[#CED4DA]">·</span>
+                  <span>
+                    Sales Rep: <strong className="text-[#212529]">{quotation.salesRep.fullName}</strong> ({quotation.salesRep.email})
+                  </span>
+                </>
+              )}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-3">

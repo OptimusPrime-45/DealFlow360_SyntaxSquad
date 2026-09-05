@@ -153,7 +153,12 @@ export default function ApprovalsPage() {
                     <span className="text-sm font-semibold text-[#212529]">{q.quotationNumber}</span>
                     <span className="text-sm font-semibold">{money(q.grandTotal)}</span>
                   </div>
-                  <div className="text-[11px] text-[#6C757D] mt-1">{q.customer?.name}</div>
+                  <div className="text-[11px] text-[#6C757D] mt-1 flex items-center justify-between">
+                    <span>{q.customer?.name}</span>
+                    {q.salesRep?.fullName && (
+                      <span className="text-[#714B67] font-medium">Rep: {q.salesRep.fullName}</span>
+                    )}
+                  </div>
                   <div className="flex gap-2 mt-2">
                     <Badge variant="warning" size="sm">
                       blended {Number(q.blendedScore).toFixed(2)}
@@ -181,7 +186,11 @@ export default function ApprovalsPage() {
               <>
                 <Card
                   title={`${detail.quotation.quotationNumber} — why this is on your desk`}
-                  subtitle={`${detail.quotation.customer?.name} · ${detail.quotation.customerTier?.name}`}
+                  subtitle={`${detail.quotation.customer?.name} · ${detail.quotation.customerTier?.name || "Standard Tier"}${
+                    detail.quotation.salesRep
+                      ? ` · Assigned Rep: ${detail.quotation.salesRep.fullName} (${detail.quotation.salesRep.email})`
+                      : ""
+                  }`}
                 >
                   <div className="grid grid-cols-3 gap-4 mb-4">
                     <div>
