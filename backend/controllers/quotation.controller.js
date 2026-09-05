@@ -108,6 +108,8 @@ export const getQuotationById = asyncHandler(async (req, res) => {
       approvals: {
         orderBy: { approvalCycle: "desc" },
       },
+      // So the UI can offer a link straight to fulfillment once confirmed.
+      order: { select: { id: true, orderNumber: true, status: true } },
     },
   });
 

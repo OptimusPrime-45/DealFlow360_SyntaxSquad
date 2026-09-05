@@ -173,6 +173,7 @@ export default function QuotationsPage() {
             {quotations.map((q) => (
               <tr
                 key={q.id}
+                onClick={() => router.push(`/quotations/${q.id}`)}
                 className="hover:bg-[#F8F9FA] transition-colors cursor-pointer"
               >
                 <td className="py-3 px-4 font-semibold text-[#714B67]">

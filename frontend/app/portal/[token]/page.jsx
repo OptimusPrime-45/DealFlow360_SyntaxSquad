@@ -39,7 +39,10 @@ export default function CustomerPortalPage() {
   const [negotiationFeedback, setNegotiationFeedback] = useState(null);
 
   // Backend API URL (defaults to localhost:4000)
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+  // NEXT_PUBLIC_API_URL is set WITH the /api suffix elsewhere in the app
+  // (lib/apiClient.js defaults to http://localhost:4000/api). This page builds
+  // its own '/api/portal/...' paths, so strip a trailing /api to avoid /api/api.
+  const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000').replace(/\/api\/?$/, '');
 
   // Function to load quotation and negotiation history
   const loadPortalData = useCallback(async () => {
