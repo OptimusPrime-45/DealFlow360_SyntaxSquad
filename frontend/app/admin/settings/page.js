@@ -106,6 +106,7 @@ export default function EngineSettingsPage() {
   return (
     <>
       <AdminHeader
+        section="Governance"
         title="Engine Settings"
         description="How the deal engine combines overages into one number, and what it does when nothing is configured. Read fresh on every evaluation."
       >
