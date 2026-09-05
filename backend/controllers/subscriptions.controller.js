@@ -409,3 +409,49 @@ export async function cancelSubscription(
 
     return result;
 }
+
+// List all subscriptions with optional filtering
+export async function listSubscriptions(query = {}) {
+    const { status, customerId, search } = query;
+    const where = {};
+
+    if (status && status !== "ALL") {
+        where.status = status;
+    }
+    if (customerId) {
+        where.customerId = customerId;
+    }
+    if (search && search.trim()) {
+        const term = search.trim();
+        where.OR = [
+            { customer: { name: { contains: term, mode: "insensitive" } } },
+            { order: { orderNumber: { contains: term, mode: "insensitive" } } },
+            { subscriptionPlan: { name: { contains: term, mode: "insensitive" } } },
+            { orderLine: { product: { name: { contains: term, mode: "insensitive" } } } }
+        ];
+    }
+
+    const subscriptions = await prisma.subscription.findMany({
+        where,
+        include: {
+            customer: {
+                select: { id: true, name: true, contactEmail: true, customerTier: true }
+            },
+            order: {
+                select: { id: true, orderNumber: true, status: true }
+            },
+            subscriptionPlan: {
+                include: { product: true }
+            },
+            orderLine: {
+                include: { product: true }
+            },
+            billingSchedules: {
+                orderBy: { billingDate: "asc" }
+            }
+        },
+        orderBy: { createdAt: "desc" }
+    });
+
+    return subscriptions;
+}

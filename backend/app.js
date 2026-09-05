@@ -113,7 +113,7 @@ app.use("/api/audit-logs", auditRoutes);
 
 app.use("/api/orders", ordersRoutes);
 app.use("/api/fulfillment", fulfillmentRoutes);
-app.use("/api/subscriptions", subscriptionsRoutes);
+app.use("/api/subscriptions", subscriptionsRoutes); // Subscriptions & recurring contracts
 
 // Internal negotiation responses (rep replies to a customer's counter-offer).
 app.use("/api/negotiations", internalNegotiationRoutes);
