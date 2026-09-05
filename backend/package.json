@@ -15,7 +15,8 @@
     "db:reset": "prisma migrate reset --force",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
-    "db:generate": "prisma generate"
+    "db:generate": "prisma generate",
+    "verify": "node scripts/verify-pipeline.js"
   },
   "keywords": [],
   "author": "",

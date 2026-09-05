@@ -1,6 +1,8 @@
 import prisma from '../lib/prisma.js';
 import { ApiError } from '../utils/api-error.js';
 import { ApiResponse } from '../utils/api-response.js';
+import { recalculateQuotation } from '../services/quotationPricing.service.js';
+import { routeQuotationForApproval } from '../services/approvalRouting.service.js';
 import { asyncHandler } from '../utils/async-handler.js';
 
 /**
@@ -297,122 +299,72 @@ export const respondToNegotiationRequest = asyncHandler(async (req, res) => {
     }
   });
 
-  // B. If a line item was negotiated, update its discount/quantity
-  let reEvaluationTriggered = false;
-  let reEvaluationReason = '';
-  let calculatedOverage = 0;
+  // B. Apply the accepted counter-offer to the quotation's lines.
+  //
+  // A customer may counter on ONE line ("this service is too expensive") or on
+  // the DEAL as a whole ("give us a better price"). §9 step 7 describes the
+  // second, so an order-level counter must apply too — this used to be gated on
+  // request.quotationLineId, which meant a deal-level counter was marked
+  // ACCEPTED and then applied to nothing at all.
+  let appliedTo = [];
 
-  if (request.quotationLineId && request.quotationLine) {
-    const line = request.quotationLine;
-    let newDiscount = Number(line.discountPercent);
-    let newQty = line.quantity;
+  if (request.proposedDiscountPercent !== null && request.proposedDiscountPercent !== undefined) {
+    const newDiscount = Number(request.proposedDiscountPercent);
 
-    if (request.proposedDiscountPercent !== null) {
-      newDiscount = Number(request.proposedDiscountPercent);
-    }
-    if (request.proposedQuantity !== null) {
-      newQty = Number(request.proposedQuantity);
-    }
-
-    // Recalculate line pricing
-    const unitPrice = Number(line.unitPrice);
-    const unitCost = Number(line.unitCost);
-    const grossTotal = unitPrice * newQty;
-    const discountAmount = grossTotal * (newDiscount / 100);
-    const newLineTotal = grossTotal - discountAmount;
-    const totalCost = unitCost * newQty;
-    const newLineMarginPercent = newLineTotal > 0 ? ((newLineTotal - totalCost) / newLineTotal) * 100 : 0;
-
-    // Check against ceiling!
-    const effectiveCeiling = Number(line.effectiveCeilingPercent || quotation.customerTier?.maxDiscountPercent || 0);
-    calculatedOverage = Math.max(0, newDiscount - effectiveCeiling);
-
-    // Update the line in the database
-    await prisma.quotationLine.update({
-      where: { id: line.id },
-      data: {
-        quantity: newQty,
-        discountPercent: newDiscount,
-        lineTotal: newLineTotal,
-        lineMarginPercent: newLineMarginPercent,
-        overagePts: calculatedOverage
-      }
-    });
-
-    // C. Check if ceiling was breached -> AUTO RE-EVALUATION LOOP (§9 Step 7)!
-    if (newDiscount > effectiveCeiling) {
-      reEvaluationTriggered = true;
-      reEvaluationReason = `Accepted discount (${newDiscount}%) exceeds effective ceiling (${effectiveCeiling}%) by ${calculatedOverage} points`;
-    }
-  }
-
-  // D. Recalculate Quotation aggregate totals
-  const allLines = await prisma.quotationLine.findMany({
-    where: { quotationId: quotation.id }
-  });
-
-  const subtotal = allLines.reduce((acc, l) => acc + (Number(l.unitPrice) * l.quantity), 0);
-  const grandTotal = allLines.reduce((acc, l) => acc + Number(l.lineTotal), 0);
-  const discountTotal = subtotal - grandTotal;
-  const taxTotal = grandTotal * 0.18; // Standard 18% tax
-  const finalGrandTotal = grandTotal + taxTotal;
-
-  // E. Determine new Quotation Status
-  let nextQuotationStatus = 'SENT';
-
-  if (reEvaluationTriggered) {
-    // AUTOMATIC APPROVAL RE-ENTRY (§9 Step 7)
-    nextQuotationStatus = 'PENDING_APPROVAL';
-
-    // Find the active approval policy
-    const activePolicy = await prisma.approvalPolicy.findFirst({
-      where: { isActive: true }
-    });
-
-    if (activePolicy) {
-      // Find latest approval cycle number
-      const latestApproval = await prisma.quotationApproval.findFirst({
+    if (request.quotationLineId) {
+      await prisma.quotationLine.update({
+        where: { id: request.quotationLineId },
+        data: { discountPercent: newDiscount },
+      });
+      appliedTo = [request.quotationLineId];
+    } else {
+      // Deal-level counter: apply to every line on the quotation.
+      const lines = await prisma.quotationLine.findMany({
         where: { quotationId: quotation.id },
-        orderBy: { approvalCycle: 'desc' }
+        select: { id: true },
       });
-
-      const nextCycle = (latestApproval?.approvalCycle || 0) + 1;
-
-      // Create new QuotationApproval cycle record
-      await prisma.quotationApproval.create({
-        data: {
-          quotationId: quotation.id,
-          approvalPolicyId: activePolicy.id,
-          approvalCycle: nextCycle,
-          status: 'PENDING',
-          blendedScore: calculatedOverage,
-          worstLineOverage: calculatedOverage,
-          triggeredBy: 'CUSTOMER_NEGOTIATION', // Stamped with CUSTOMER_NEGOTIATION as per §9
-          findings: {
-            reason: reEvaluationReason,
-            triggeredAt: new Date()
-          }
-        }
+      await prisma.quotationLine.updateMany({
+        where: { quotationId: quotation.id },
+        data: { discountPercent: newDiscount },
       });
+      appliedTo = lines.map((l) => l.id);
     }
   }
 
-  // Update Quotation row with totals and updated status
-  await prisma.quotation.update({
-    where: { id: quotation.id },
-    data: {
-      status: nextQuotationStatus,
-      subtotal: subtotal,
-      discountTotal: discountTotal,
-      taxTotal: taxTotal,
-      grandTotal: finalGrandTotal,
-      blendedScore: reEvaluationTriggered ? calculatedOverage : 0,
-      worstLineOverage: reEvaluationTriggered ? calculatedOverage : 0,
-      lastActivityAt: new Date()
-    }
+  if (request.proposedQuantity !== null && request.proposedQuantity !== undefined && request.quotationLineId) {
+    await prisma.quotationLine.update({
+      where: { id: request.quotationLineId },
+      data: { quantity: Number(request.proposedQuantity) },
+    });
+  }
+
+  // C. Re-price and re-score through the SHARED engine.
+  //
+  // This block used to recompute everything by hand: it set blendedScore and
+  // worstLineOverage to the same single number, hardcoded 18% tax regardless of
+  // each line's taxRate, ignored the configured approval thresholds, and — worst
+  // of all — created an approval cycle with NO STEPS, so nobody could ever act
+  // on it and the quotation was stuck in PENDING_APPROVAL forever.
+  const rescored = await recalculateQuotation(quotation.id);
+
+  // D. Route it. Same service the rep's own submit uses, so a counter-offer and
+  // a rep submission can never be judged by different rules.
+  const routed = await routeQuotationForApproval({
+    quotationId: quotation.id,
+    actorUserId: userId || null,
+    triggerSource: 'CUSTOMER_NEGOTIATION',
   });
 
-  // F. Log event in Audit Log
+  const reEvaluationTriggered = !routed.autoApproved;
+  const reEvaluationReason = reEvaluationTriggered
+    ? `Accepted terms score blended=${routed.evaluation.blendedScore}, worst line ${routed.evaluation.worstLineOverage} pts over ceiling; routed to ${routed.evaluation.requiredApprovalSteps
+        .map((x) => x.roleCode)
+        .join(' then ')}`
+    : 'Accepted terms remain within every configured ceiling';
+
+  const nextQuotationStatus = routed.status;
+
+  // E. Log the outcome.
   await prisma.auditLog.create({
     data: {
       quotationId: quotation.id,
@@ -424,10 +376,13 @@ export const respondToNegotiationRequest = asyncHandler(async (req, res) => {
       newValue: {
         action: 'ACCEPT',
         newStatus: nextQuotationStatus,
-        reEvaluationTriggered
+        reEvaluationTriggered,
+        appliedToLines: appliedTo.length,
+        blendedScore: routed.evaluation.blendedScore,
+        worstLineOverage: routed.evaluation.worstLineOverage,
       },
-      reason: reEvaluationTriggered ? reEvaluationReason : 'Accepted by sales representative'
-    }
+      reason: reEvaluationReason,
+    },
   });
 
   return res.status(200).json(
