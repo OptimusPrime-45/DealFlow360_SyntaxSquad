@@ -74,15 +74,23 @@ export default function QuotationDetailPage() {
 
   const acceptSuggestion = async (s) => {
     setBusy(true);
+    setError("");
     setNotice("");
     try {
-      await apiClient.post(`/quotations/${id}/lines`, {
+      const oldTotal = quotation.grandTotal;
+      const oldMargin = quotation.marginPercent;
+      const res = await apiClient.post(`/quotations/${id}/lines`, {
         productId: s.productId,
         quantity: 1,
         discountPercent: 0,
         addedViaUpsell: true,
       });
-      setNotice(`Added ${s.name} — totals and margin updated`);
+      const updatedQuote = res?.data?.quotation || res?.quotation;
+      const newTotal = updatedQuote?.grandTotal ?? (Number(oldTotal) + Number(s.unitPrice));
+      const newMargin = updatedQuote?.marginPercent ?? oldMargin;
+      setNotice(
+        `✓ Upsell Accepted! Added ${s.name} (+${money(s.unitPrice)}) — Order Total updated immediately: ${money(oldTotal)} → ${money(newTotal)} | Margin updated: ${pct(oldMargin)} → ${pct(newMargin)}`
+      );
       await load();
     } catch (err) {
       setError(err.message);
@@ -676,6 +684,12 @@ export default function QuotationDetailPage() {
                         <Badge variant="warning" size="sm">{s.promotionTag}</Badge>
                       )}
                     </div>
+
+                    {s.reason && (
+                      <p className="text-[11px] text-[#495057] italic bg-[#F8F9FA] p-1.5 rounded border border-[#E9ECEF] mt-2 mb-1">
+                        &quot;{s.reason}&quot;
+                      </p>
+                    )}
 
                     <div className="flex items-center gap-3 mt-2 text-[11px]">
                       <span className="text-[#6C757D]">{money(s.unitPrice)}</span>

@@ -419,6 +419,12 @@ export default function OrdersListPage() {
                     <Link href={`/orders/${order.id}`}>
                       <Button variant="secondary" size="sm" className="text-xs">
                         Fulfillment
+                      <Button
+                        variant={order.status === "PENDING_FULFILLMENT" || order.status === "BACKORDERED" ? "primary" : "secondary"}
+                        size="sm"
+                        className="text-xs"
+                      >
+                        📦 Fulfillment &amp; Split
                       </Button>
                     </Link>
                     {order.status !== "COMPLETED" && (
