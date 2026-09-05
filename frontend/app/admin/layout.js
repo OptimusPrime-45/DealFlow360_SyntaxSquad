@@ -28,9 +28,10 @@ const SECTIONS = [
   {
     group: "Catalogue",
     items: [
-      { href: "/admin/products", label: "Products", hint: "Prices, costs, categories" },
-      { href: "/admin/price-lists", label: "Price Lists", hint: "Tier & currency pricing" },
-      { href: "/admin/plans", label: "Subscription Plans", hint: "Recurring billing" },
+      { href: "/admin/products", label: "Products", hint: "Physical and standard products" },
+      { href: "/admin/subscription-products", label: "Subscription Products", hint: "Recurring software and SaaS" },
+      { href: "/admin/services", label: "Services", hint: "Recurring and professional services" },
+      { href: "/admin/price-lists", label: "Price Lists", hint: "Tier and currency pricing" },
       { href: "/admin/upsell", label: "Upsell Rules", hint: "Co-purchase pairings" },
     ],
   },
