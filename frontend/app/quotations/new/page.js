@@ -19,6 +19,7 @@ export default function NewQuotationPage() {
   // Form State
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [lines, setLines] = useState([]);
+  const [revisionData, setRevisionData] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -43,8 +44,38 @@ export default function NewQuotationPage() {
         const rules = Array.isArray(rulesRes) ? rulesRes : (rulesRes?.rules || rulesRes?.data || []);
         setDiscountRules(rules);
 
-        // Default to first customer if available
-        if (custList.length > 0) {
+        // Check if revising an existing quotation
+        const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+        const revisionOfId = params?.get("revisionOf") || params?.get("fromQuotationId");
+
+        if (revisionOfId) {
+          try {
+            const quoteRes = await apiClient.get(`/quotations/${revisionOfId}`);
+            const q = quoteRes?.quotation;
+            if (q) {
+              setSelectedCustomerId(q.customerId);
+              if (Array.isArray(q.lines) && q.lines.length > 0) {
+                setLines(
+                  q.lines.map((l) => ({
+                    productId: l.productId,
+                    quantity: l.quantity,
+                    discountPercent: Number(l.discountPercent) || 0,
+                  }))
+                );
+              }
+              const rejectedStep = q.approvals?.[0]?.steps?.find((s) => s.status === "REJECTED");
+              setRevisionData({
+                id: q.id,
+                quotationNumber: q.quotationNumber,
+                customerName: q.customer?.name,
+                rejectionReason: rejectedStep?.reason,
+                status: q.status,
+              });
+            }
+          } catch (revErr) {
+            console.error("Failed to load revision quotation:", revErr);
+          }
+        } else if (custList.length > 0) {
           setSelectedCustomerId(custList[0].id);
         }
       } catch (err) {
@@ -77,9 +108,11 @@ export default function NewQuotationPage() {
     ]);
   };
 
-  // Add initial line when products load
+  // Add initial line when products load if not in revision mode
   useEffect(() => {
-    if (products.length > 0 && lines.length === 0) {
+    const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    const isRevision = params?.get("revisionOf") || params?.get("fromQuotationId");
+    if (products.length > 0 && lines.length === 0 && !isRevision) {
       handleAddLine();
     }
   }, [products]);
@@ -205,6 +238,7 @@ export default function NewQuotationPage() {
     try {
       const payload = {
         customerId: selectedCustomerId,
+        notes: revisionData ? `Revision of ${revisionData.quotationNumber}` : undefined,
         autoSubmit,
         lines: lines.map((l, idx) => ({
           productId: l.productId,
@@ -214,7 +248,17 @@ export default function NewQuotationPage() {
         })),
       };
 
-      await apiClient.post("/quotations", payload);
+      const res = await apiClient.post("/quotations", payload);
+      const newQuotationId = res?.quotation?.id;
+
+      if (autoSubmit && newQuotationId) {
+        try {
+          await apiClient.post(`/quotations/${newQuotationId}/submit`, {});
+        } catch (submitErr) {
+          console.error("Auto submit failed:", submitErr);
+        }
+      }
+
       router.push("/quotations");
     } catch (err) {
       setError(err.message || "Failed to create quotation");
@@ -243,7 +287,7 @@ export default function NewQuotationPage() {
           </Link>
           <span className="text-[#CED4DA]">/</span>
           <span className="text-sm font-bold text-[#714B67]">
-            New Multi-Line Quotation
+            {revisionData ? `Revise Quotation (${revisionData.quotationNumber})` : "New Multi-Line Quotation"}
           </span>
         </div>
 
@@ -269,13 +313,32 @@ export default function NewQuotationPage() {
             loading={submitting}
             className="font-semibold"
           >
-            Confirm &amp; Submit Quotation
+            {revisionData ? "Submit Revised Quotation" : "Confirm & Submit Quotation"}
           </Button>
         </div>
       </header>
 
       {/* Main Content Form */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+        {revisionData && (
+          <div className="bg-[#FFF5F5] border border-[#DC3545]/30 rounded-[8px] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-bold text-[#DC3545] flex items-center gap-2">
+                <span>⚠ Revising Quotation {revisionData.quotationNumber}</span>
+                <Badge variant="danger" size="sm">REVISION MODE</Badge>
+              </div>
+              {revisionData.rejectionReason && (
+                <div className="mt-2 text-xs bg-white border border-[#DC3545]/20 rounded p-2.5 text-[#212529]">
+                  <strong className="text-[#DC3545]">Manager Feedback:</strong> "{revisionData.rejectionReason}"
+                </div>
+              )}
+              <p className="text-xs text-[#6C757D] mt-1.5">
+                Adjust the line discounts, quantities, or products below to address manager concerns. When submitted, this creates a revised quotation in the pipeline.
+              </p>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="p-3 text-xs bg-[#DC3545]/10 border border-[#DC3545]/30 text-[#DC3545] rounded-[6px]">
             {error}

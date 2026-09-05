@@ -179,13 +179,21 @@ export default function QuotationDetailPage() {
     }
   };
 
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [rejectStepId, setRejectStepId] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
+
   const handleApproveStep = async (stepId) => {
     setBusy(true);
     setNotice("");
     setError("");
     try {
-      await apiClient.post(`/approvals/steps/${stepId}/approve`, { reason: "Approved by manager" });
-      setNotice("Approval step approved successfully!");
+      const res = await apiClient.post(`/approvals/steps/${stepId}/approve`, { reason: "Approved by manager" });
+      if (res?.cycleCompleted) {
+        setNotice("Final approval granted! Quotation is now APPROVED and ready for customer acceptance.");
+      } else {
+        setNotice("Step approved! Deal escalated to Finance Manager for secondary authorization.");
+      }
       await load();
     } catch (err) {
       setError(err.message || "Failed to approve step");
@@ -194,15 +202,29 @@ export default function QuotationDetailPage() {
     }
   };
 
-  const handleRejectStep = async (stepId) => {
-    const reason = prompt("Enter reason for rejection (min 3 characters):");
-    if (!reason || reason.trim().length < 3) return;
+  const openRejectModal = (stepId) => {
+    setRejectStepId(stepId);
+    setRejectReason("");
+    setError("");
+    setRejectModalOpen(true);
+  };
+
+  const confirmRejection = async () => {
+    if (!rejectReason || rejectReason.trim().length < 3) {
+      setError("Please provide a rejection reason of at least 3 characters.");
+      return;
+    }
     setBusy(true);
     setNotice("");
     setError("");
     try {
-      await apiClient.post(`/approvals/steps/${stepId}/reject`, { reason: reason.trim() });
-      setNotice("Approval step rejected. Quotation returned.");
+      await apiClient.post(`/approvals/steps/${rejectStepId}/reject`, {
+        reason: rejectReason.trim(),
+      });
+      setNotice("Quotation rejected. Status changed to REJECTED (open for changes and negotiation).");
+      setRejectModalOpen(false);
+      setRejectReason("");
+      setRejectStepId(null);
       await load();
     } catch (err) {
       setError(err.message || "Failed to reject step");
@@ -232,6 +254,12 @@ export default function QuotationDetailPage() {
     );
   }
 
+  const userRoleCode = typeof user?.role === "string" ? user.role : user?.role?.code;
+  const isSalesRep =
+    userRoleCode === "SALES_REP" ||
+    (user?.id === quotation.salesRepId &&
+      userRoleCode !== "SALES_MANAGER" &&
+      userRoleCode !== "FINANCE");
   const editable = ["DRAFT", "REJECTED", "UNDER_NEGOTIATION"].includes(quotation.status);
   const breaches = quotation.lines.filter((l) => Number(l.overagePts) > 0);
   const marginPct = Number(quotation.marginPercent);
@@ -282,9 +310,20 @@ export default function QuotationDetailPage() {
               </Link>
             </>
           )}
-          {editable && (
-            <Button variant="primary" size="sm" onClick={submit} disabled={busy}>
-              Confirm Quotation
+          {editable && isSalesRep && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                if (quotation.status === "REJECTED") {
+                  router.push(`/quotations/new?revisionOf=${quotation.id}`);
+                } else {
+                  submit();
+                }
+              }}
+              disabled={busy}
+            >
+              {quotation.status === "REJECTED" ? "Re-evaluate & Update" : "Confirm Quotation"}
             </Button>
           )}
         </div>
@@ -299,6 +338,61 @@ export default function QuotationDetailPage() {
         {error && (
           <div className="bg-[#FDECEA] border border-[#DC3545]/30 text-[#842029] text-sm rounded-[8px] px-4 py-3">
             {error}
+          </div>
+        )}
+
+        {/* Rejection and Negotiation Banner */}
+        {quotation.status === "REJECTED" && (
+          <div className="bg-[#FFF5F5] border border-[#DC3545]/30 rounded-[8px] p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div>
+              <div className="text-sm font-bold text-[#DC3545] flex items-center gap-2">
+                <span>⚠ Quotation Rejected by Management</span>
+                <Badge variant="danger" size="sm">REJECTED / OPEN FOR NEGOTIATION</Badge>
+              </div>
+              <p className="text-xs text-[#6C757D] mt-1">
+                The requested discounts exceed the acceptable margin floor or risk threshold. The quotation is now <strong>open for changes and negotiation</strong>. The sales representative can adjust line item discounts or discuss terms with the customer, then re-submit.
+              </p>
+              {quotation.approvals?.[0]?.steps?.find((s) => s.status === "REJECTED")?.reason && (
+                <div className="mt-2 text-xs bg-white border border-[#DC3545]/20 rounded p-2 text-[#212529]">
+                  <strong className="text-[#DC3545]">Manager Feedback:</strong> "{quotation.approvals[0].steps.find((s) => s.status === "REJECTED").reason}"
+                </div>
+              )}
+            </div>
+            {isSalesRep && (
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => router.push(`/quotations/new?revisionOf=${quotation.id}`)}
+                  disabled={busy}
+                >
+                  Re-evaluate &amp; Update
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Approved & Ready for Customer / Order Conversion Banner */}
+        {quotation.status === "APPROVED" && !quotation.order && (
+          <div className="bg-[#E7F5EC] border border-[#28A745]/30 rounded-[8px] p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div>
+              <div className="text-sm font-bold text-[#155724] flex items-center gap-2">
+                <span>✓ Quotation Approved by Management</span>
+                <Badge variant="success" size="sm">READY FOR CUSTOMER</Badge>
+              </div>
+              <p className="text-xs text-[#155724]/80 mt-1">
+                All required approval ladder steps have been satisfied. Send the quotation to the customer for acceptance, or confirm directly to create a Sales Order.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button variant="secondary" size="sm" onClick={sendToCustomer} disabled={busy}>
+                Send to Customer
+              </Button>
+              <Button variant="primary" size="sm" onClick={confirmToOrder} disabled={busy}>
+                Confirm Order &amp; Process Deal
+              </Button>
+            </div>
           </div>
         )}
 
@@ -352,83 +446,98 @@ export default function QuotationDetailPage() {
         )}
 
         {/* Approval Ladder / Lifecycle status */}
-        {quotation.status === "PENDING_APPROVAL" && (
+        {quotation.approvals?.[0] && (
           <Card
-            title="Approval Ladder in Progress"
-            subtitle="The deal exceeds discount ceilings or margin rules and requires authorization"
+            title={
+              quotation.status === "PENDING_APPROVAL"
+                ? "Approval Ladder in Progress"
+                : quotation.status === "REJECTED"
+                ? "Approval Ladder History (Rejected)"
+                : quotation.status === "APPROVED"
+                ? "Approval Ladder (Fully Authorized)"
+                : "Approval Ladder History"
+            }
+            subtitle={
+              quotation.status === "PENDING_APPROVAL"
+                ? "The deal exceeds discount ceilings or margin rules and requires authorization"
+                : quotation.status === "REJECTED"
+                ? "This approval cycle was rejected. Quotation is open for changes and negotiation."
+                : quotation.status === "APPROVED"
+                ? "All management authorization steps have been successfully completed."
+                : `Cycle #${quotation.approvals[0].approvalCycle} · Triggered by: ${quotation.approvals[0].triggeredBy}`
+            }
           >
-            {quotation.approvals?.[0] ? (
-              <div className="space-y-3">
-                <div className="text-xs text-[#6C757D]">
-                  Cycle #{quotation.approvals[0].approvalCycle} · Triggered by: {quotation.approvals[0].triggeredBy}
-                </div>
-                <div className="divide-y divide-[#E9ECEF] border border-[#E9ECEF] rounded-[6px]">
-                  {quotation.approvals[0].steps?.map((step) => {
-                    const isReviewerOrAdmin =
-                      user &&
-                      (user.role?.code === "ADMIN" || user.roleId === step.roleId) &&
-                      user.id !== quotation.salesRepId;
+            <div className="space-y-3">
+              <div className="text-xs text-[#6C757D]">
+                Cycle #{quotation.approvals[0].approvalCycle} · Triggered by: {quotation.approvals[0].triggeredBy}
+              </div>
+              <div className="divide-y divide-[#E9ECEF] border border-[#E9ECEF] rounded-[6px]">
+                {quotation.approvals[0].steps?.map((step) => {
+                  const userRoleCode = typeof user?.role === "string" ? user.role : user?.role?.code;
+                  const isReviewerOrAdmin =
+                    user &&
+                    (userRoleCode === "ADMIN" ||
+                      userRoleCode === step.role?.code ||
+                      (user.roleId && user.roleId === step.roleId)) &&
+                    user.id !== quotation.salesRepId;
 
-                    return (
-                      <div key={step.id} className="p-3 flex items-center justify-between">
-                        <div>
-                          <div className="text-sm font-semibold text-[#212529]">
-                            Step {step.stepOrder}: {step.role?.name || "Reviewer"}
-                          </div>
-                          <div className="text-xs text-[#6C757D]">
-                            {step.reviewer ? `Reviewed by ${step.reviewer.fullName}` : "Awaiting review"}
-                            {step.reason && ` — "${step.reason}"`}
-                          </div>
+                  return (
+                    <div key={step.id} className="p-3 flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-[#212529]">
+                          Step {step.stepOrder}: {step.role?.name || "Reviewer"}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Badge
-                            variant={
-                              step.status === "APPROVED"
-                                ? "success"
-                                : step.status === "REJECTED"
-                                ? "danger"
-                                : "warning"
-                            }
-                            size="sm"
-                          >
-                            {step.status}
-                          </Badge>
-                          {step.status === "PENDING" && isReviewerOrAdmin && (
-                            <div className="flex gap-1.5 ml-2">
-                              <Button
-                                variant="primary"
-                                size="sm"
-                                className="text-xs py-1 px-2.5"
-                                disabled={busy}
-                                onClick={() => handleApproveStep(step.id)}
-                              >
-                                Approve
-                              </Button>
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                className="text-xs py-1 px-2.5 text-[#DC3545]"
-                                disabled={busy}
-                                onClick={() => handleRejectStep(step.id)}
-                              >
-                                Reject
-                              </Button>
-                            </div>
-                          )}
+                        <div className="text-xs text-[#6C757D]">
+                          {step.reviewer ? `Reviewed by ${step.reviewer.fullName}` : "Awaiting review"}
+                          {step.reason && ` — "${step.reason}"`}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-                {user?.id === quotation.salesRepId && (
-                  <p className="text-xs text-[#6C757D] italic">
-                    Note: Anti-self-approval rule in effect. You cannot approve your own quotation.
-                  </p>
-                )}
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant={
+                            step.status === "APPROVED"
+                              ? "success"
+                              : step.status === "REJECTED"
+                              ? "danger"
+                              : "warning"
+                          }
+                          size="sm"
+                        >
+                          {step.status}
+                        </Badge>
+                        {quotation.status === "PENDING_APPROVAL" && step.status === "PENDING" && isReviewerOrAdmin && (
+                          <div className="flex gap-1.5 ml-2">
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              className="text-xs py-1 px-2.5"
+                              disabled={busy}
+                              onClick={() => handleApproveStep(step.id)}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="text-xs py-1 px-2.5 text-[#DC3545]"
+                              disabled={busy}
+                              onClick={() => openRejectModal(step.id)}
+                            >
+                              Reject
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ) : (
-              <p className="text-xs text-[#6C757D]">Approval routing pending initialization.</p>
-            )}
+              {quotation.status === "PENDING_APPROVAL" && user?.id === quotation.salesRepId && (
+                <p className="text-xs text-[#6C757D] italic">
+                  Note: Anti-self-approval rule in effect. As the requesting sales representative, you cannot approve your own quotation.
+                </p>
+              )}
+            </div>
           </Card>
         )}
 
@@ -602,6 +711,80 @@ export default function QuotationDetailPage() {
           </div>
         </div>
       </main>
+
+      {/* Embedded Rejection Modal (replaces browser prompt) */}
+      {rejectModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[10px] shadow-2xl border border-[#E9ECEF] max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-6 py-4 border-b border-[#E9ECEF] flex items-center justify-between bg-[#F8F9FA]">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#DC3545]"></span>
+                <h3 className="font-bold text-base text-[#212529]">Reject Quotation Step</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setRejectModalOpen(false);
+                  setRejectReason("");
+                  setRejectStepId(null);
+                }}
+                className="text-[#6C757D] hover:text-[#212529] text-xl font-bold leading-none p-1 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-[#6C757D] leading-relaxed">
+                Provide a business reason for rejecting this discount or margin exception. This explanation will be displayed directly to the sales representative so they can adjust terms or negotiate with the customer.
+              </p>
+              <div>
+                <label className="block text-xs font-semibold text-[#495057] uppercase tracking-wider mb-2">
+                  Reason for Rejection <span className="text-[#DC3545]">*</span>
+                </label>
+                <textarea
+                  rows={4}
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder="e.g. Discount exceeds unit economics. Cap discount at 12% or negotiate higher order volume..."
+                  className="w-full text-sm text-[#212529] border border-[#CED4DA] rounded-[6px] p-3 focus:outline-none focus:border-[#714B67] focus:ring-1 focus:ring-[#714B67]"
+                  autoFocus
+                />
+                <div className="flex justify-between items-center mt-1.5 text-[11px] text-[#6C757D]">
+                  <span>Minimum 3 characters required</span>
+                  <span className={rejectReason.trim().length >= 3 ? "text-[#28A745] font-semibold" : "text-[#DC3545]"}>
+                    {rejectReason.trim().length} / 3 chars
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-3.5 bg-[#F8F9FA] border-t border-[#E9ECEF] flex items-center justify-end gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setRejectModalOpen(false);
+                  setRejectReason("");
+                  setRejectStepId(null);
+                }}
+                disabled={busy}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                className="bg-[#DC3545] hover:bg-[#BB2D3B] text-white border-none font-semibold px-4"
+                onClick={confirmRejection}
+                disabled={busy || rejectReason.trim().length < 3}
+              >
+                {busy ? "Rejecting..." : "Confirm Rejection"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

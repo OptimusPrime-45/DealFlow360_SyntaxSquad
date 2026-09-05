@@ -18,7 +18,8 @@ export default function PlansPage() {
   return (
     <>
       <AdminHeader
-        title="Subscription Plans (Now Unified in Subscription Products)"
+        section="Catalogue"
+        title="Subscription Plans"
         description="Subscription plans and recurring pricing are now configured directly within each SaaS product under Catalogue → Subscription Products."
       >
         <Link href="/admin/subscription-products">
@@ -27,11 +28,6 @@ export default function PlansPage() {
           </Button>
         </Link>
       </AdminHeader>
-        section="Catalogue"
-        title="Subscription Plans"
-        description="Recurring plans attached to subscription products. A quotation line using a plan generates its own billing schedule, billed separately from one-time lines on the same order."
-      />
-      <Banners error={plans.error} notice={plans.notice} />
 
       <div className="bg-[#EBF5FB] border border-[#2980B9]/30 rounded-[8px] p-4 mb-6 text-sm text-[#1B4F72] flex items-center justify-between">
         <div>
