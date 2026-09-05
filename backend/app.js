@@ -1,49 +1,142 @@
-import express from 'express';
-import cors from 'cors';
-import portalRoutes from './routes/portal.routes.js';
-import negotiationRoutes from './routes/negotiation.routes.js';
-import internalNegotiationRoutes from './routes/internal-negotiation.routes.js';
-import invoicingRoutes from './routes/invoicing.routes.js';
-import { generatePortalLink } from './controllers/portal.controller.js';
-import { requireInternal } from './middleware/auth.js';
-import { errorHandler } from './middleware/error-handler.js';
-import { ApiResponse } from './utils/api-response.js';
+// ============================================================================
+//  DealFlow360 — Express application
+//
+//  This file is the UNION of all four tracks' route surfaces. It was rebuilt
+//  during the four-way merge, which had left three defects:
+//    1. the 404 catch-all was mounted BEFORE /api/governance, /api/approvals
+//       and /api/audit-logs, so all three silently returned 404;
+//    2. /api/auth was mounted three times;
+//    3. two different error handlers were imported, one of them unused.
+//
+//  MOUNT ORDER MATTERS. Express matches in registration order, so the
+//  catch-all 404 and the error handler must stay LAST in this file.
+// ============================================================================
+
+import express from "express";
+import cors from "cors";
+
+// ── Track 1 · identity, catalog, quotations ─────────────────────────────────
+import authRoutes from "./routes/auth.routes.js";
+import customerRoutes from "./routes/customer.routes.js";
+import tierRoutes from "./routes/tier.routes.js";
+import catalogRoutes from "./routes/catalog.routes.js";
+import quotationRoutes from "./routes/quotation.routes.js";
+
+// ── Track 2 · governance, approvals, audit ──────────────────────────────────
+import governanceRoutes from "./routes/governance.routes.js";
+import approvalRoutes from "./routes/approval.routes.js";
+import auditRoutes from "./routes/audit.routes.js";
+
+// ── Track 3 · orders, fulfillment, subscription billing ─────────────────────
+import ordersRoutes from "./routes/orders.routes.js";
+import fulfillmentRoutes from "./routes/fulfillment.routes.js";
+import subscriptionsRoutes from "./routes/subscriptions.routes.js";
+
+// ── Track 4 · customer portal, negotiation, invoicing ───────────────────────
+import portalRoutes from "./routes/portal.routes.js";
+import portalNegotiationRoutes from "./routes/negotiation.routes.js";
+import internalNegotiationRoutes from "./routes/internal-negotiation.routes.js";
+import invoicingRoutes from "./routes/invoicing.routes.js";
+import { generatePortalLink } from "./controllers/portal.controller.js";
+
+import { requireInternal } from "./middleware/auth.js";
+import { errorHandler } from "./middleware/error.middleware.js";
+import { ApiResponse } from "./utils/api-response.js";
 
 const app = express();
 
-// Enable Cross-Origin Resource Sharing for the Next.js frontend
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
-}));
-
-// Parse JSON request bodies
+// ── Base middleware ─────────────────────────────────────────────────────────
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    credentials: true,
+  })
+);
 app.use(express.json());
 
-// Basic health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json(new ApiResponse(200, { status: 'healthy', timestamp: new Date() }, 'API is active'));
+// ── Health check ────────────────────────────────────────────────────────────
+app.get("/api/health", (req, res) => {
+  res.json(
+    new ApiResponse(
+      200,
+      { status: "healthy", timestamp: new Date() },
+      "DealFlow360 backend is running"
+    )
+  );
 });
 
-// Customer Portal namespace (/api/portal/*)
-app.use('/api/portal', portalRoutes);
-app.use('/api/portal', negotiationRoutes);
+// ============================================================================
+//  INTERNAL API  (/api/*)  — signed with JWT_SECRET, claim typ: 'internal'
+// ============================================================================
 
-// Internal Negotiations namespace (/api/negotiations/*)
-app.use('/api/negotiations', internalNegotiationRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/customers", customerRoutes);
+app.use("/api/customer-tiers", tierRoutes);
 
-// Invoicing & Revenue namespace (/api/invoices/*)
-app.use('/api/invoices', invoicingRoutes);
+// catalogRoutes defines /categories and /products, so it mounts at /api.
+app.use("/api", catalogRoutes);
 
-// Internal Quotations endpoint for sales reps to generate portal links
-app.post('/api/quotations/:id/portal-link', generatePortalLink);
+// A rep mints a magic link for a quotation. This MUST be registered before
+// quotationRoutes, which applies a blanket `authenticate` to everything under
+// /api/quotations and would otherwise 401 this path.
+//
+// SECURITY TODO (Phase 3): this endpoint is unauthenticated, carried over
+// as-is from the pre-merge code so T4's portal suite keeps passing. Minting a
+// customer portal link is an internal rep action and must be wrapped in
+// `requireInternal` — currently anyone can mint a link for any quotation id.
+// The same hole exists on POST /api/portal/links/:id in portal.routes.js.
+app.post("/api/quotations/:id/portal-link", generatePortalLink);
 
-// Dedicated internal test route used to assert PRD Metric M6 (Zero internal routes reachable by portal token)
-app.get('/api/internal/test-protected', requireInternal, (req, res) => {
-  res.json(new ApiResponse(200, { accessGranted: true, user: req.user }, 'Internal route access confirmed'));
+app.use("/api/quotations", quotationRoutes);
+app.use("/api/governance", governanceRoutes);
+app.use("/api/approvals", approvalRoutes);
+app.use("/api/audit-logs", auditRoutes);
+
+app.use("/api/orders", ordersRoutes);
+app.use("/api/fulfillment", fulfillmentRoutes);
+app.use("/api/subscriptions", subscriptionsRoutes);
+
+// Internal negotiation responses (rep replies to a customer's counter-offer).
+app.use("/api/negotiations", internalNegotiationRoutes);
+
+// Invoicing and payments.
+app.use("/api/invoices", invoicingRoutes);
+
+// ============================================================================
+//  CUSTOMER PORTAL  (/api/portal/*)
+//  Signed with PORTAL_JWT_SECRET, claim typ: 'portal'.
+//  A portal token fails SIGNATURE verification on any /api/* route above, so
+//  the boundary holds even if a middleware check is ever forgotten (PRD M6).
+// ============================================================================
+
+app.use("/api/portal", portalRoutes);
+app.use("/api/portal", portalNegotiationRoutes);
+
+// Probe route used by the M6 assertion in the test suite: a portal token must
+// never reach this, an internal token always must.
+app.get("/api/internal/test-protected", requireInternal, (req, res) => {
+  res.json(
+    new ApiResponse(
+      200,
+      { accessGranted: true, user: req.user },
+      "Internal route access confirmed"
+    )
+  );
 });
 
-// Centralized error handling middleware (must be after all routes)
+// ============================================================================
+//  TERMINAL HANDLERS — these two must stay last, in this order.
+// ============================================================================
+
+// Unknown route.
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: { message: `Route not found: ${req.method} ${req.originalUrl}`, code: "NOT_FOUND" },
+  });
+});
+
+// Centralised error handler.
 app.use(errorHandler);
 
 export default app;

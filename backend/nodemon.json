@@ -1,0 +1,18 @@
+{
+  "watch": [
+    "controllers",
+    "routes",
+    "middleware",
+    "utils",
+    "lib",
+    "app.js",
+    "index.js"
+  ],
+  "ext": "js,mjs,json",
+  "ignore": [
+    "node_modules",
+    "prisma",
+    "test_all_features.mjs"
+  ],
+  "delay": 500
+}
