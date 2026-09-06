@@ -15,7 +15,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "../../../context/AuthContext.js";
 import apiClient from "../../../lib/apiClient.js";
-import { Button, Card, Badge, Table } from "../../../components/ui/index.js";
+import { Button, Card, Badge, Table, AppShell, SidebarToggleButton } from "../../../components/ui/index.js";
 
 const money = (v) =>
   `₹${Number(v ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -208,10 +208,11 @@ export default function OrderDetailPage() {
   const recurringInvoices = invoices.filter((i) => i.invoiceType === "RECURRING");
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] pb-16">
+    <AppShell className="pb-16">
       {/* Top Navigation Bar */}
       <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-20 shadow-xs">
         <div className="flex items-center gap-4">
+          <SidebarToggleButton />
           <Link href="/orders" className="text-sm font-medium text-[#6C757D] hover:text-[#714B67]">
             ← Orders
           </Link>
@@ -780,6 +781,6 @@ export default function OrderDetailPage() {
           </div>
         </div>
       )}
-    </div>
+    </AppShell>
   );
 }

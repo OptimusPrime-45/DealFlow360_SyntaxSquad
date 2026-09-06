@@ -11,7 +11,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext.js";
 import apiClient from "../../lib/apiClient.js";
-import { Button, Card, Badge } from "../../components/ui/index.js";
+import { Button, Card, Badge, AppShell, SidebarToggleButton } from "../../components/ui/index.js";
 import { OdooControlPanel } from "../../components/ui/OdooControlPanel.jsx";
 import { GroupedTable } from "../../components/ui/GroupedTable.jsx";
 import { BatchActionBar } from "../../components/ui/BatchActionBar.jsx";
@@ -124,6 +124,13 @@ export default function OrdersListPage() {
     return result;
   }, [orders, searchTerm, activeFilters, btreeIndex]);
 
+  // Selection scoped to the current view. Filters must never leave hidden rows
+  // selected: batch actions and counts would then act on records the user cannot see.
+  const visibleSelectedIds = useMemo(
+    () => new Set(filteredOrders.filter((o) => selectedIds.has(o.id)).map((o) => o.id)),
+    [filteredOrders, selectedIds]
+  );
+
   // Selection Handlers
   const handleToggleSelect = (id) => {
     setSelectedIds((prev) => {
@@ -149,7 +156,7 @@ export default function OrdersListPage() {
 
   // Batch Actions
   const handleExportSelected = () => {
-    const selectedRows = filteredOrders.filter((o) => selectedIds.has(o.id));
+    const selectedRows = filteredOrders.filter((o) => visibleSelectedIds.has(o.id));
     if (selectedRows.length === 0) return;
 
     exportToCSV(
@@ -168,12 +175,12 @@ export default function OrdersListPage() {
   };
 
   const handleBatchCloseDeals = async () => {
-    if (!confirm(`Close deals and mark ${selectedIds.size} selected orders as COMPLETED?`)) return;
+    if (!confirm(`Close deals and mark ${visibleSelectedIds.size} selected orders as COMPLETED?`)) return;
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const ids = Array.from(selectedIds);
+      const ids = Array.from(visibleSelectedIds);
       for (const id of ids) {
         await apiClient.post(`/orders/${id}/close`, {});
       }
@@ -222,9 +229,10 @@ export default function OrdersListPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA]">
-      <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-10">
+    <AppShell>
+      <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-10 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
         <div className="flex items-center gap-4">
+          <SidebarToggleButton />
           <Link href="/" className="text-sm text-[#6C757D] hover:text-[#714B67] transition-colors">
             ← Workspace
           </Link>
@@ -308,7 +316,7 @@ export default function OrdersListPage() {
 
         {/* Batch Action Bar */}
         <BatchActionBar
-          selectedCount={selectedIds.size}
+          selectedCount={visibleSelectedIds.size}
           totalCount={filteredOrders.length}
           onSelectAll={() => setSelectedIds(new Set(filteredOrders.map((o) => o.id)))}
           onClearSelection={() => setSelectedIds(new Set())}
@@ -320,7 +328,7 @@ export default function OrdersListPage() {
               variant: "secondary",
             },
             {
-              label: `Batch Close Deals (${selectedIds.size})`,
+              label: `Batch Close Deals (${visibleSelectedIds.size})`,
               icon: "✓",
               onClick: handleBatchCloseDeals,
               variant: "primary",
@@ -342,7 +350,7 @@ export default function OrdersListPage() {
           ]}
           data={filteredOrders}
           getId={(o) => o.id}
-          selectedIds={selectedIds}
+          selectedIds={visibleSelectedIds}
           onToggleSelect={handleToggleSelect}
           onToggleSelectAll={(ids) => handleToggleSelectAll(ids)}
           groupBy={activeGroupBy}
@@ -443,6 +451,7 @@ export default function OrdersListPage() {
           }}
         />
       </main>
-    </div>
+    </AppShell>
   );
 }
+

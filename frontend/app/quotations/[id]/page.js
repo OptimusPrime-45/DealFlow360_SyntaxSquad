@@ -13,7 +13,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "../../../context/AuthContext.js";
 import apiClient from "../../../lib/apiClient.js";
-import { Button, Card, Badge, Table } from "../../../components/ui/index.js";
+import { Button, Card, Badge, Table, AppShell, SidebarToggleButton } from "../../../components/ui/index.js";
 
 const money = (v) =>
   `₹${Number(v ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -273,9 +273,10 @@ export default function QuotationDetailPage() {
   const marginPct = Number(quotation.marginPercent);
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA]">
+    <AppShell>
       <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-10">
         <div className="flex items-center gap-4">
+          <SidebarToggleButton />
           <Link href="/quotations" className="text-sm text-[#6C757D] hover:text-[#714B67]">
             ← Pipeline
           </Link>
@@ -799,6 +800,6 @@ export default function QuotationDetailPage() {
           </div>
         </div>
       )}
-    </div>
+    </AppShell>
   );
 }

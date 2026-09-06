@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../../context/AuthContext.js";
 import apiClient from "../../../lib/apiClient.js";
-import { Button, Input, Card, Badge, Table } from "../../../components/ui/index.js";
+import { Button, Input, Card, Badge, Table, AppShell, SidebarToggleButton } from "../../../components/ui/index.js";
 import { BTreeSearchIndex } from "../../../lib/btree.js";
 import { getUpsellSuggestionsForProducts } from "../../../lib/upsellCatalog.js";
 
@@ -400,10 +400,11 @@ export default function NewQuotationPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] flex flex-col">
+    <AppShell>
       {/* Top Header */}
       <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-10">
         <div className="flex items-center gap-3">
+          <SidebarToggleButton />
           <Link href="/quotations" className="text-sm font-semibold text-[#6C757D] hover:text-[#212529]">
             ← Quotations
           </Link>
@@ -1062,6 +1063,6 @@ export default function NewQuotationPage() {
           </div>
         )}
       </main>
-    </div>
+    </AppShell>
   );
 }

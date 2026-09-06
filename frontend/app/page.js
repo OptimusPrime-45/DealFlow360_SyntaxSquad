@@ -22,7 +22,7 @@ import React, { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext.js";
-import { Button, Card, Badge } from "../components/ui/index.js";
+import { Button, Card, Badge, AppShell, SidebarToggleButton } from "../components/ui/index.js";
 
 const ROLE_SUMMARY = {
   ADMIN: "You configure the rules the deal engine runs on, and can see everything.",
@@ -117,16 +117,17 @@ export default function HomePage() {
   const secondary = available.filter((d) => !(d.primaryFor || []).includes(roleCode));
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] flex flex-col">
+    <AppShell>
       <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-10 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-[8px] bg-[#714B67] text-white flex items-center justify-center font-bold text-sm">
-            DF
+          <SidebarToggleButton />
+          <div className="font-bold text-base text-[#212529] tracking-tight">
+            Dashboard Overview
           </div>
-          <div>
-            <div className="font-bold text-base text-[#212529] tracking-tight">DealFlow360</div>
-            <div className="text-[11px] text-[#6C757D]">Self-Governing Deal Engine</div>
-          </div>
+          <span className="text-[#CED4DA]">/</span>
+          <span className="text-xs text-[#6C757D] font-medium">
+            {roleName} Workspace
+          </span>
         </div>
 
         <div className="flex items-center gap-4">
@@ -210,6 +211,7 @@ export default function HomePage() {
           hiding a link is convenience, the server is the control.
         </p>
       </main>
-    </div>
+    </AppShell>
   );
 }
+

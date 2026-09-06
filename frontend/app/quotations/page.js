@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext.js";
 import apiClient from "../../lib/apiClient.js";
-import { Button, Badge } from "../../components/ui/index.js";
+import { Button, Badge, AppShell, QuotationsKanban, SidebarToggleButton } from "../../components/ui/index.js";
 import { OdooControlPanel } from "../../components/ui/OdooControlPanel.jsx";
 import { GroupedTable } from "../../components/ui/GroupedTable.jsx";
 import { BatchActionBar } from "../../components/ui/BatchActionBar.jsx";
@@ -21,6 +21,16 @@ const OPEN_STATUSES = new Set([
   "UNDER_NEGOTIATION",
   "APPROVED",
 ]);
+
+// Single source of truth for "stalled", so the row badge and the Stalled filter
+// can never disagree. Mirrors backend getQuotations(stalled=true): inactive beyond
+// the threshold AND still in an open (non-terminal) status.
+const inactiveDays = (q, nowTs) =>
+  Math.floor(
+    (nowTs - new Date(q.lastActivityAt || q.createdAt).getTime()) / (24 * 60 * 60 * 1000)
+  );
+const isStalledQuotation = (q, nowTs) =>
+  OPEN_STATUSES.has(q.status) && inactiveDays(q, nowTs) >= STALLED_AFTER_DAYS;
 
 export default function QuotationsPage() {
   const router = useRouter();
@@ -43,6 +53,7 @@ export default function QuotationsPage() {
     anomaly: "",
   });
   const [activeGroupBy, setActiveGroupBy] = useState("");
+  const [viewMode, setViewMode] = useState("kanban"); // 'kanban' | 'table'
 
   // Selection state
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -140,19 +151,18 @@ export default function QuotationsPage() {
     } else if (activeFilters.anomaly === "CEILING_BREACH") {
       result = result.filter((q) => Number(q.worstLineOverage) > 0);
     } else if (activeFilters.anomaly === "STALLED") {
-      // Mirrors backend getQuotations(stalled=true): inactive past the threshold
-      // and still in an open (non-terminal) status.
-      const cutoff = (loadedAt ?? 0) - STALLED_AFTER_DAYS * 24 * 60 * 60 * 1000;
-      result = result.filter(
-        (q) =>
-          q.lastActivityAt &&
-          new Date(q.lastActivityAt).getTime() <= cutoff &&
-          OPEN_STATUSES.has(q.status)
-      );
+      result = result.filter((q) => isStalledQuotation(q, loadedAt ?? 0));
     }
 
     return result;
   }, [quotations, searchTerm, activeFilters, btreeIndex, loadedAt]);
+
+  // Selection scoped to the current view. Filters must never leave hidden rows
+  // selected: batch actions and counts would then act on records the user cannot see.
+  const visibleSelectedIds = useMemo(
+    () => new Set(filteredQuotations.filter((q) => selectedIds.has(q.id)).map((q) => q.id)),
+    [filteredQuotations, selectedIds]
+  );
 
   // Multi-select helpers
   const handleToggleSelect = (id) => {
@@ -188,7 +198,7 @@ export default function QuotationsPage() {
 
   // CSV Export Action
   const handleExportSelected = () => {
-    const selectedRows = filteredQuotations.filter((q) => selectedIds.has(q.id));
+    const selectedRows = filteredQuotations.filter((q) => visibleSelectedIds.has(q.id));
     if (selectedRows.length === 0) return;
 
     exportToCSV(
@@ -217,6 +227,8 @@ export default function QuotationsPage() {
     UNDER_NEGOTIATION: "warning",
     REJECTED: "danger",
     CONFIRMED: "neutral",
+    CANCELLED: "danger",
+    EXPIRED: "gray",
   };
 
   const tierColors = {
@@ -238,6 +250,8 @@ export default function QuotationsPage() {
         { label: "Under Negotiation", value: "UNDER_NEGOTIATION" },
         { label: "Confirmed", value: "CONFIRMED" },
         { label: "Rejected", value: "REJECTED" },
+        { label: "Cancelled", value: "CANCELLED" },
+        { label: "Expired", value: "EXPIRED" },
       ],
     },
     {
@@ -279,28 +293,53 @@ export default function QuotationsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] flex flex-col">
+    <AppShell>
       {/* Top Navigation */}
-      <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-30">
+      <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-30 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
         <div className="flex items-center gap-3">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-[6px] bg-[#714B67] text-white flex items-center justify-center font-bold text-xs shadow-xs">
-              DF
-            </div>
-            <span className="font-bold text-base text-[#212529]">
-              DealFlow360
-            </span>
-          </Link>
-          <span className="text-[#CED4DA]">/</span>
-          <span className="text-sm font-semibold text-[#714B67]">
+          <SidebarToggleButton />
+          <span className="font-bold text-base text-[#212529]">
             Quotations Pipeline
+          </span>
+          <span className="text-[#CED4DA]">/</span>
+          <span className="text-xs text-[#6C757D] font-medium">
+            {viewMode === "kanban" ? "Kanban Board" : "Detailed List"}
           </span>
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Kanban / Table Toggle */}
+          <div className="flex items-center bg-[#F1F3F5] p-1 rounded-lg border border-[#DEE2E6]">
+            <button
+              type="button"
+              onClick={() => setViewMode("kanban")}
+              className={`px-3 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 ${
+                viewMode === "kanban"
+                  ? "bg-[#714B67] text-white shadow-xs"
+                  : "text-[#495057] hover:text-[#212529]"
+              }`}
+            >
+              <span>▦</span>
+              <span>Kanban</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              className={`px-3 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 ${
+                viewMode === "table"
+                  ? "bg-[#714B67] text-white shadow-xs"
+                  : "text-[#495057] hover:text-[#212529]"
+              }`}
+            >
+              <span>☰</span>
+              <span>Table</span>
+            </button>
+          </div>
+
           <span className="text-xs px-2.5 py-1 rounded bg-[#F3EEF2] text-[#714B67] font-semibold border border-[#714B67]/20">
             {user?.role || "User"}
           </span>
+
           <Link href="/quotations/new">
             <Button variant="primary" size="sm" className="font-semibold shadow-xs">
               + New Quotation
@@ -363,7 +402,7 @@ export default function QuotationsPage() {
 
         {/* Batch Action Bar (Appears when 1+ checkboxes selected) */}
         <BatchActionBar
-          selectedCount={selectedIds.size}
+          selectedCount={visibleSelectedIds.size}
           totalCount={filteredQuotations.length}
           onSelectAll={handleSelectAllVisible}
           onClearSelection={handleClearSelection}
@@ -383,149 +422,165 @@ export default function QuotationsPage() {
           </div>
         )}
 
-        {/* Table View */}
+        {/* Content View: Kanban or Table */}
         {loading ? (
           <div className="py-20 text-center">
             <div className="w-8 h-8 border-3 border-[#714B67] border-t-transparent rounded-full animate-spin mx-auto mb-2" />
             <p className="text-xs text-[#6C757D]">Loading quotations...</p>
           </div>
+        ) : viewMode === "kanban" ? (
+          <QuotationsKanban
+            quotations={filteredQuotations}
+            onSwitchToTable={() => setViewMode("table")}
+          />
         ) : (
-          <GroupedTable
-            headers={[
-              { label: "Quote Number", key: "quotationNumber", className: "w-36" },
-              { label: "Customer", key: "customer.name" },
-              { label: "Sales Rep", key: "salesRep.fullName" },
-              { label: "Customer Tier", key: "customerTier.code", className: "w-28" },
-              { label: "Status", key: "status", className: "w-36" },
-              { label: "Lines", key: "_count.lines", className: "w-20 text-center" },
-              { label: "Grand Total", key: "grandTotal", className: "w-32" },
-              { label: "Margin", key: "marginPercent", className: "w-24" },
-              { label: "Worst Overage", key: "worstLineOverage", className: "w-28" },
-              { label: "Last Activity", key: "lastActivityAt", className: "w-28" },
-            ]}
-            data={filteredQuotations}
-            getId={(q) => q.id}
-            selectedIds={selectedIds}
-            onToggleSelect={handleToggleSelect}
-            onToggleSelectAll={handleToggleSelectAll}
-            groupBy={activeGroupBy}
-            aggregateCols={[
-              {
-                key: "grandTotal",
-                label: "Sum",
-                type: "sum",
-                formatter: (val) => `₹${Number(val).toLocaleString()}`,
-              },
-              {
-                key: "marginPercent",
-                label: "Avg Margin",
-                type: "avg",
-                formatter: (val) => `${Number(val).toFixed(1)}%`,
-              },
-            ]}
-            emptyMessage="No quotations found matching your search and filter criteria."
-            renderRow={(q, isSelected, toggleSelect) => (
-              <tr
-                key={q.id}
-                onClick={() => router.push(`/quotations/${q.id}`)}
-                className={`hover:bg-[#F8F9FA] transition-colors cursor-pointer ${
-                  isSelected ? "bg-[#714B67]/5" : ""
-                }`}
+          <div className="space-y-3">
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setViewMode("kanban")}
+                className="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-[#714B67]/10 text-[#714B67] hover:bg-[#714B67]/20 border border-[#714B67]/30 transition-colors flex items-center gap-1.5 cursor-pointer"
               >
-                <td
-                  className="py-3 px-3 text-center"
-                  onClick={(e) => e.stopPropagation()}
+                <span>▦</span>
+                <span>Switch to Kanban View</span>
+              </button>
+            </div>
+            <GroupedTable
+              headers={[
+                { label: "Quote Number", key: "quotationNumber", className: "w-36" },
+                { label: "Customer", key: "customer.name" },
+                { label: "Sales Rep", key: "salesRep.fullName" },
+                { label: "Customer Tier", key: "customerTier.code", className: "w-28" },
+                { label: "Status", key: "status", className: "w-36" },
+                { label: "Lines", key: "_count.lines", className: "w-20 text-center" },
+                { label: "Grand Total", key: "grandTotal", className: "w-32" },
+                { label: "Margin", key: "marginPercent", className: "w-24" },
+                { label: "Worst Overage", key: "worstLineOverage", className: "w-28" },
+                { label: "Last Activity", key: "lastActivityAt", className: "w-28" },
+              ]}
+              data={filteredQuotations}
+              getId={(q) => q.id}
+              selectedIds={visibleSelectedIds}
+              onToggleSelect={handleToggleSelect}
+              onToggleSelectAll={handleToggleSelectAll}
+              groupBy={activeGroupBy}
+              aggregateCols={[
+                {
+                  key: "grandTotal",
+                  label: "Sum",
+                  type: "sum",
+                  formatter: (val) => `₹${Number(val).toLocaleString()}`,
+                },
+                {
+                  key: "marginPercent",
+                  label: "Avg Margin",
+                  type: "avg",
+                  formatter: (val) => `${Number(val).toFixed(1)}%`,
+                },
+              ]}
+              emptyMessage="No quotations found matching your search and filter criteria."
+              renderRow={(q, isSelected, toggleSelect) => (
+                <tr
+                  key={q.id}
+                  onClick={() => router.push(`/quotations/${q.id}`)}
+                  className={`hover:bg-[#F8F9FA] transition-colors cursor-pointer ${
+                    isSelected ? "bg-[#714B67]/5" : ""
+                  }`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={toggleSelect}
-                    className="w-4 h-4 accent-[#714B67] rounded cursor-pointer"
-                  />
-                </td>
-                <td className="py-3 px-4 font-bold text-[#714B67]">
-                  {q.quotationNumber}
-                </td>
-                <td className="py-3 px-4">
-                  <div className="font-semibold text-[#212529]">
-                    {q.customer?.name}
-                  </div>
-                  <div className="text-[11px] text-[#6C757D]">
-                    {q.customer?.contactEmail}
-                  </div>
-                </td>
-                <td className="py-3 px-4">
-                  <div className="font-medium text-xs text-[#212529]">
-                    {q.salesRep?.fullName || "Unassigned"}
-                  </div>
-                  <div className="text-[11px] text-[#6C757D]">
-                    {q.salesRep?.email}
-                  </div>
-                </td>
-                <td className="py-3 px-4">
-                  <Badge
-                    variant={tierColors[q.customerTier?.code] || "neutral"}
-                    size="sm"
+                  <td
+                    className="py-3 px-3 text-center"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    {q.customerTier?.name || q.customerTier?.code}
-                  </Badge>
-                </td>
-                <td className="py-3 px-4">
-                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={toggleSelect}
+                      className="w-4 h-4 accent-[#714B67] rounded cursor-pointer"
+                    />
+                  </td>
+                  <td className="py-3 px-4 font-bold text-[#714B67]">
+                    {q.quotationNumber}
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="font-semibold text-[#212529]">
+                      {q.customer?.name}
+                    </div>
+                    <div className="text-[11px] text-[#6C757D]">
+                      {q.customer?.contactEmail}
+                    </div>
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="font-medium text-xs text-[#212529]">
+                      {q.salesRep?.fullName || "Unassigned"}
+                    </div>
+                    <div className="text-[11px] text-[#6C757D]">
+                      {q.salesRep?.email}
+                    </div>
+                  </td>
+                  <td className="py-3 px-4">
                     <Badge
-                      variant={statusColors[q.status] || "neutral"}
+                      variant={tierColors[q.customerTier?.code] || "neutral"}
                       size="sm"
                     >
-                      {q.status}
+                      {q.customerTier?.name || q.customerTier?.code}
                     </Badge>
-                    {(() => {
-                      const msInactive = Date.now() - new Date(q.lastActivityAt || q.createdAt).getTime();
-                      const daysInactive = Math.floor(msInactive / (24 * 60 * 60 * 1000));
-                      const isStalled = daysInactive >= 7 && !["CONFIRMED", "CANCELLED", "REJECTED"].includes(q.status);
-                      return isStalled ? (
-                        <Badge variant="danger" size="sm" title={`Inactive for ${daysInactive} days`}>
-                          Stalled ({daysInactive}d)
-                        </Badge>
-                      ) : null;
-                    })()}
-                  </div>
-                </td>
-                <td className="py-3 px-4 text-xs text-[#6C757D] text-center font-medium">
-                  {q._count?.lines || q.lines?.length || 0}
-                </td>
-                <td className="py-3 px-4 font-bold text-[#212529]">
-                  ₹{Number(q.grandTotal).toLocaleString()}
-                </td>
-                <td className="py-3 px-4">
-                  <span
-                    className={`font-bold text-xs ${
-                      Number(q.marginPercent) < 15
-                        ? "text-[#DC3545]"
-                        : "text-[#28A745]"
-                    }`}
-                  >
-                    {Number(q.marginPercent).toFixed(1)}%
-                  </span>
-                </td>
-                <td className="py-3 px-4">
-                  {Number(q.worstLineOverage) > 0 ? (
-                    <Badge variant="danger" size="sm">
-                      +{Number(q.worstLineOverage).toFixed(1)} pts
-                    </Badge>
-                  ) : (
-                    <Badge variant="success" size="sm">
-                      Compliant
-                    </Badge>
-                  )}
-                </td>
-                <td className="py-3 px-4 text-xs text-[#6C757D]">
-                  {new Date(q.lastActivityAt || q.createdAt).toLocaleDateString()}
-                </td>
-              </tr>
-            )}
-          />
+                  </td>
+                  <td className="py-3 px-4">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Badge
+                        variant={statusColors[q.status] || "neutral"}
+                        size="sm"
+                      >
+                        {q.status}
+                      </Badge>
+                      {(() => {
+                        const daysInactive = inactiveDays(q, loadedAt ?? 0);
+                        return isStalledQuotation(q, loadedAt ?? 0) ? (
+                          <Badge variant="danger" size="sm" title={`Inactive for ${daysInactive} days`}>
+                            Stalled ({daysInactive}d)
+                          </Badge>
+                        ) : null;
+                      })()}
+                    </div>
+                  </td>
+                  <td className="py-3 px-4 text-xs text-[#6C757D] text-center font-medium">
+                    {q._count?.lines || q.lines?.length || 0}
+                  </td>
+                  <td className="py-3 px-4 font-bold text-[#212529]">
+                    ₹{Number(q.grandTotal).toLocaleString()}
+                  </td>
+                  <td className="py-3 px-4">
+                    <span
+                      className={`font-bold text-xs ${
+                        Number(q.marginPercent) < 15
+                          ? "text-[#DC3545]"
+                          : "text-[#28A745]"
+                      }`}
+                    >
+                      {Number(q.marginPercent).toFixed(1)}%
+                    </span>
+                  </td>
+                  <td className="py-3 px-4">
+                    {Number(q.worstLineOverage) > 0 ? (
+                      <Badge variant="danger" size="sm">
+                        +{Number(q.worstLineOverage).toFixed(1)} pts
+                      </Badge>
+                    ) : (
+                      <Badge variant="success" size="sm">
+                        Compliant
+                      </Badge>
+                    )}
+                  </td>
+                  <td className="py-3 px-4 text-xs text-[#6C757D]">
+                    {new Date(q.lastActivityAt || q.createdAt).toLocaleDateString()}
+                  </td>
+                </tr>
+              )}
+            />
+          </div>
         )}
       </main>
-    </div>
+    </AppShell>
   );
 }
+

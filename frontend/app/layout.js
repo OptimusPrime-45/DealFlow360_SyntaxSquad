@@ -1,6 +1,6 @@
 import "./globals.css";
 import { AuthProvider } from "../context/AuthContext.js";
-
+import { SidebarProvider } from "../context/SidebarContext.js";
 
 export const metadata = {
   title: "DealFlow360 — Self-Governing Deal Engine",
@@ -19,8 +19,13 @@ export default function RootLayout({ children }) {
         />
       </head>
       <body className="min-h-full flex flex-col bg-[#F8F9FA] text-[#212529] font-sans">
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <SidebarProvider>
+            {children}
+          </SidebarProvider>
+        </AuthProvider>
       </body>
     </html>
   );
 }
+
