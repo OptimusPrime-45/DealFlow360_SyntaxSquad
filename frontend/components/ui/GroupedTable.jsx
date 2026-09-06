@@ -63,7 +63,7 @@ export function GroupedTable({
       groups.get(groupKey).push(item);
     });
 
-    return Array.from(groups.entries()).map(([key, items]) => {
+    return Array.from(groups.entries()).map(([groupKey, items]) => {
       // Calculate aggregates
       const aggs = aggregateCols.map((col) => {
         let val = 0;

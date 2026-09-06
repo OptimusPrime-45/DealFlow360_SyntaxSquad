@@ -8,6 +8,7 @@ import { GroupedTable } from '../../components/ui/GroupedTable.jsx';
 import { BatchActionBar } from '../../components/ui/BatchActionBar.jsx';
 import { BTreeSearchIndex } from '../../lib/btree.js';
 import { exportToCSV } from '../../lib/exportCsv.js';
+import { AppShell, SidebarToggleButton } from '../../components/ui/index.js';
 
 /**
  * DealFlow360 — Invoicing & Payment Management Screen (Feature 3 / §9 Step 8)
@@ -543,7 +544,7 @@ export default function InvoicingDashboardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f8f9fa] text-[#212529] font-sans antialiased">
+    <AppShell>
       {/* ==================================================================== */}
       {/* Top Application Header (Odoo Purple Brand Bar) */}
       {/* ==================================================================== */}
@@ -552,6 +553,7 @@ export default function InvoicingDashboardPage() {
           <div className="flex items-center justify-between h-16">
             {/* Logo & Navigation Title */}
             <div className="flex items-center space-x-4">
+              <SidebarToggleButton className="bg-white/10 text-white border-white/20 hover:bg-white/20 hover:text-white" />
               <Link href="/" className="text-white/80 hover:text-white text-xs">
                 ← Workspace
               </Link>
@@ -1119,6 +1121,7 @@ export default function InvoicingDashboardPage() {
           </div>
         </div>
       )}
-    </div>
+    </AppShell>
   );
 }
+

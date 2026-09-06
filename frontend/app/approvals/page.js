@@ -18,7 +18,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext.js";
 import apiClient from "../../lib/apiClient.js";
-import { Button, Card, Badge, Table } from "../../components/ui/index.js";
+import { Button, Card, Badge, Table, AppShell, ApprovalProcessLineView, SidebarToggleButton } from "../../components/ui/index.js";
 import { OdooControlPanel } from "../../components/ui/OdooControlPanel.jsx";
 import { BatchActionBar } from "../../components/ui/BatchActionBar.jsx";
 import { BTreeSearchIndex } from "../../lib/btree.js";
@@ -122,8 +122,9 @@ export default function ApprovalsPage() {
     }
   };
 
-  const act = async (stepId, action) => {
-    if (action !== "approve" && !reason.trim()) {
+  const act = async (stepId, action, customReason) => {
+    const finalReason = (customReason !== undefined ? customReason : reason).trim();
+    if (action !== "approve" && !finalReason) {
       setError("A reason is required when rejecting or returning a quotation.");
       return;
     }
@@ -132,7 +133,7 @@ export default function ApprovalsPage() {
     setNotice("");
     try {
       const res = await apiClient.post(`/approvals/steps/${stepId}/${action}`, {
-        reason: reason.trim() || "Approved after review",
+        reason: finalReason || "Approved after review",
       });
       if (action === "approve") {
         setNotice(
@@ -255,6 +256,13 @@ export default function ApprovalsPage() {
     return result;
   }, [quotations, searchTerm, activeFilters, btreeIndex]);
 
+  // Selection scoped to the current view. Filters must never leave hidden rows
+  // selected: batch actions and counts would then act on records the user cannot see.
+  const visibleSelectedIds = useMemo(
+    () => new Set(filteredQuotations.filter((q) => selectedIds.has(q.id)).map((q) => q.id)),
+    [filteredQuotations, selectedIds]
+  );
+
   // Grouping computation for Queue
   const groupedQuotations = useMemo(() => {
     if (!activeGroupBy) return null;
@@ -300,14 +308,14 @@ export default function ApprovalsPage() {
 
   // Batch Approve Action
   const handleBatchApprove = async () => {
-    if (!confirm(`Are you sure you want to approve ${selectedIds.size} selected quotations?`)) {
+    if (!confirm(`Are you sure you want to approve ${visibleSelectedIds.size} selected quotations?`)) {
       return;
     }
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const targetIds = Array.from(selectedIds);
+      const targetIds = Array.from(visibleSelectedIds);
       let successCount = 0;
 
       for (const quoteId of targetIds) {
@@ -341,7 +349,7 @@ export default function ApprovalsPage() {
 
   // Export Selected to CSV
   const handleExportSelected = () => {
-    const selectedRows = filteredQuotations.filter((q) => selectedIds.has(q.id));
+    const selectedRows = filteredQuotations.filter((q) => visibleSelectedIds.has(q.id));
     if (selectedRows.length === 0) return;
 
     exportToCSV(
@@ -419,7 +427,7 @@ export default function ApprovalsPage() {
 
   const renderQueueItem = (q) => {
     const isSelected = selected?.id === q.id;
-    const isChecked = selectedIds.has(q.id);
+    const isChecked = visibleSelectedIds.has(q.id);
 
     return (
       <div
@@ -475,10 +483,11 @@ export default function ApprovalsPage() {
   const roleCode = typeof user?.role === "string" ? user.role : user?.role?.code;
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] flex flex-col">
+    <AppShell>
       {/* Top Header */}
       <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-20 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
         <div className="flex items-center gap-4">
+          <SidebarToggleButton />
           <Link href="/" className="text-sm font-medium text-[#6C757D] hover:text-[#714B67] transition-colors">
             ← Workspace
           </Link>
@@ -499,6 +508,9 @@ export default function ApprovalsPage() {
           <Badge variant={roleCode === "SALES_MANAGER" ? "warning" : roleCode === "FINANCE" ? "info" : "danger"} size="sm">
             {roleCode}
           </Badge>
+          <Button variant="secondary" size="sm" onClick={loadQueue} disabled={busy}>
+            ↻ Refresh
+          </Button>
           {(roleCode === "ADMIN" || roleCode === "SALES_MANAGER") && (
             <Link href="/admin/tiers" className="text-xs font-medium text-[#714B67] hover:underline ml-2 hidden md:inline">
               ⚙ Configure Tiers & Chains
@@ -526,7 +538,7 @@ export default function ApprovalsPage() {
                   activeTab === "approvals" ? "bg-white/20 text-white" : "bg-[#F8F9FA] text-[#212529] border border-[#CED4DA]"
                 }`}
               >
-                {quotations.length}
+                {filteredQuotations.length}
               </span>
             </button>
 
@@ -628,13 +640,13 @@ export default function ApprovalsPage() {
 
           {/* Batch Action Bar */}
           <BatchActionBar
-            selectedCount={selectedIds.size}
+            selectedCount={visibleSelectedIds.size}
             totalCount={filteredQuotations.length}
             onSelectAll={handleSelectAllVisible}
             onClearSelection={handleClearSelection}
             actions={[
               {
-                label: `Batch Approve Selected (${selectedIds.size})`,
+                label: `Batch Approve Selected (${visibleSelectedIds.size})`,
                 icon: "✓",
                 onClick: handleBatchApprove,
                 variant: "primary",
@@ -661,7 +673,7 @@ export default function ApprovalsPage() {
                     onClick={handleSelectAllVisible}
                     className="text-xs text-[#714B67] hover:underline font-semibold"
                   >
-                    {selectedIds.size === filteredQuotations.length ? "Deselect All" : "Select All"}
+                    {visibleSelectedIds.size === filteredQuotations.length ? "Deselect All" : "Select All"}
                   </button>
                 )
               }
@@ -703,191 +715,36 @@ export default function ApprovalsPage() {
               </div>
             </Card>
 
-            {/* Right Column: Review Details & Action Box */}
+            {/* Right Column: Approval Process Line View matching Image 2 */}
             <div className="lg:col-span-2 space-y-5">
-              {!detail && (
+              {!detail ? (
                 <Card>
-                  <div className="p-8 text-center text-sm text-[#6C757D]">
-                    <div className="text-2xl mb-2">📋</div>
-                    Select a quotation from the queue to view line-level violation findings, step history, and decision controls.
+                  <div className="p-12 text-center text-sm text-[#6C757D]">
+                    <div className="text-3xl mb-3">🛡️</div>
+                    <div className="font-semibold text-base text-[#212529] mb-1">
+                      Select a quotation to open Approval Detail
+                    </div>
+                    <p className="text-xs text-[#6C757D] max-w-sm mx-auto">
+                      Click any quotation from the list on the left to inspect line-level ceiling breaches, stage stepper flow, and record decision actions.
+                    </p>
                   </div>
                 </Card>
-              )}
-
-              {detail && (
-                <>
-                  <Card
-                    title={`${detail.quotation.quotationNumber} — Policy Violation Findings`}
-                    subtitle={`${detail.quotation.customer?.name} · ${detail.quotation.customerTier?.name || "Standard Tier"}${
-                      detail.quotation.salesRep
-                        ? ` · Assigned Rep: ${detail.quotation.salesRep.fullName}`
-                        : ""
-                    }`}
-                  >
-                    <div className="grid grid-cols-3 gap-4 mb-4 bg-[#F8F9FA] p-3 rounded-[6px] border border-[#E9ECEF]">
-                      <div>
-                        <div className="text-[10px] uppercase font-semibold text-[#6C757D]">Blended Score</div>
-                        <div className="text-base font-bold text-[#212529]">
-                          {Number(detail.quotation.blendedScore).toFixed(2)}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] uppercase font-semibold text-[#6C757D]">Worst Line Overage</div>
-                        <div className="text-base font-bold text-[#DC3545]">
-                          +{Number(detail.quotation.worstLineOverage).toFixed(2)} pts
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] uppercase font-semibold text-[#6C757D]">Order Total Value</div>
-                        <div className="text-base font-bold text-[#212529]">{money(detail.quotation.grandTotal)}</div>
-                      </div>
-                    </div>
-
-                    {activeCycle && (
-                      <p className="text-xs text-[#6C757D] mb-3">
-                        Approval cycle {activeCycle.approvalCycle} · triggered by{" "}
-                        <strong className="text-[#212529]">
-                          {String(activeCycle.triggeredBy).replace(/_/g, " ").toLowerCase()}
-                        </strong>
-                      </p>
-                    )}
-
-                    <Table headers={["Line Item", "Discount Applied", "Policy Ceiling", "Ceiling Overage"]}>
-                      {(findingRows.length > 0 ? findingRows : detail.quotation.lines).map((f, i) => (
-                        <tr key={f.lineId || f.id || i} className="border-t border-[#E9ECEF]">
-                          <td className="px-4 py-2.5 text-xs font-medium text-[#212529]">
-                            {f.productName || f.product?.name || "Product Line"}
-                          </td>
-                          <td className="px-4 py-2.5 text-xs font-semibold">{pct(f.discountPercent)}</td>
-                          <td className="px-4 py-2.5 text-xs text-[#6C757D]">
-                            {pct(f.effectiveCeilingPercent)}
-                          </td>
-                          <td className="px-4 py-2.5">
-                            {Number(f.overagePts) > 0 ? (
-                              <Badge variant="danger" size="sm">
-                                +{Number(f.overagePts).toFixed(1)} pts
-                              </Badge>
-                            ) : (
-                              <span className="text-[#28A745] text-xs font-semibold">✓ Compliant</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </Table>
-                  </Card>
-
-                  {/* Decision Panel */}
-                  <Card title="Manager Action & Reason" subtitle="Decisions are cryptographically recorded with actor ID, timestamp, and audit trail.">
-                    <textarea
-                      value={reason}
-                      onChange={(e) => setReason(e.target.value)}
-                      rows={2}
-                      placeholder="Enter review decision notes (mandatory when rejecting or returning)..."
-                      className="w-full px-3 py-2 text-xs bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] mb-3 placeholder:text-[#868E96] focus:border-[#714B67] focus:outline-none"
-                    />
-
-                    <div className="space-y-2">
-                      {(activeCycle?.steps || []).map((s) => {
-                        const isAuthor = user?.id === detail.quotation?.salesRepId;
-                        const isAuthorizedReviewer =
-                          (roleCode === "ADMIN" ||
-                            roleCode === s.role?.code ||
-                            (user?.roleId && user.roleId === s.roleId)) &&
-                          !isAuthor;
-
-                        return (
-                          <div
-                            key={s.id}
-                            className="flex flex-col sm:flex-row sm:items-center justify-between border border-[#E9ECEF] rounded-[6px] p-3 gap-2 bg-white"
-                          >
-                            <div>
-                              <div className="text-xs font-bold text-[#212529] flex items-center gap-2">
-                                <span>Step {s.stepOrder}: {s.role?.name || s.role?.code}</span>
-                                {s.status === "PENDING" && isAuthorizedReviewer && (
-                                  <Badge variant="warning" size="sm">Action Required</Badge>
-                                )}
-                              </div>
-                              <div className="text-[11px] text-[#6C757D] mt-0.5">
-                                {s.reviewer ? `Reviewed by ${s.reviewer.fullName}` : "Awaiting decision"}
-                                {s.reason && ` — "${s.reason}"`}
-                              </div>
-                            </div>
-
-                            {s.status === "PENDING" ? (
-                              isAuthorizedReviewer ? (
-                                <div className="flex items-center gap-1.5">
-                                  <Button
-                                    variant="primary"
-                                    size="sm"
-                                    className="text-xs font-semibold"
-                                    disabled={busy}
-                                    onClick={() => act(s.id, "approve")}
-                                  >
-                                    Approve Deal
-                                  </Button>
-                                  <Button
-                                    variant="danger"
-                                    size="sm"
-                                    className="text-xs"
-                                    disabled={busy}
-                                    onClick={() => act(s.id, "reject")}
-                                  >
-                                    Reject
-                                  </Button>
-                                  <Button
-                                    variant="secondary"
-                                    size="sm"
-                                    className="text-xs"
-                                    disabled={busy}
-                                    onClick={() => act(s.id, "return")}
-                                  >
-                                    Return to Rep
-                                  </Button>
-                                </div>
-                              ) : isAuthor ? (
-                                <span className="text-xs text-[#DC3545] font-medium italic">
-                                  Anti-self-approval rule active
-                                </span>
-                              ) : (
-                                <span className="text-xs text-[#6C757D] font-medium">
-                                  Awaiting {s.role?.name || s.role?.code}
-                                </span>
-                              )
-                            ) : (
-                              <Badge
-                                variant={
-                                  s.status === "APPROVED"
-                                    ? "success"
-                                    : s.status === "REJECTED"
-                                    ? "danger"
-                                    : "neutral"
-                                }
-                                size="sm"
-                              >
-                                {s.status}
-                              </Badge>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    <div className="mt-4 pt-3 border-t border-[#E9ECEF] flex items-center justify-between">
-                      <Link href={`/quotations/${detail.quotation.id}`}>
-                        <Button variant="secondary" size="sm" className="text-xs">
-                          Open Full Quotation Editor →
-                        </Button>
-                      </Link>
-                      <span className="text-[11px] text-[#6C757D]">
-                        Status: <strong>{detail.quotation.status}</strong>
-                      </span>
-                    </div>
-                  </Card>
-                </>
+              ) : (
+                <ApprovalProcessLineView
+                  quotation={detail.quotation}
+                  history={detail.history}
+                  currentUserRole={roleCode}
+                  busy={busy}
+                  onApprove={(stepId, note) => act(stepId, "approve", note)}
+                  onReject={(stepId, note) => act(stepId, "reject", note)}
+                  onReturn={(stepId, note) => act(stepId, "return", note)}
+                />
               )}
             </div>
           </div>
           </>
+
+
         )}
 
         {/* ═══════════════════════════════════════════════════════════════════ */}
@@ -1166,6 +1023,7 @@ export default function ApprovalsPage() {
           </div>
         )}
       </main>
-    </div>
+    </AppShell>
   );
 }
+

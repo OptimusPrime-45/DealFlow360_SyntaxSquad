@@ -13,33 +13,34 @@ import React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext.js";
-import { Badge } from "../../components/ui/index.js";
+import { useSidebar } from "../../context/SidebarContext.js";
+import { Badge, SidebarToggleButton } from "../../components/ui/index.js";
 
 const SECTIONS = [
   {
     group: "Governance",
     items: [
-      { href: "/admin/settings", label: "Engine Settings", hint: "Scoring strategy & fallbacks" },
-      { href: "/admin/tiers", label: "Customer Tiers", hint: "Tier-level ceilings" },
-      { href: "/admin/discount-rules", label: "Discount Rules", hint: "Per-category ceilings" },
-      { href: "/admin/approval-ladder", label: "Approval Ladder", hint: "Who reviews, and when" },
+      { href: "/admin/settings", label: "Engine Settings", icon: "⚙️", hint: "Scoring strategy & fallbacks" },
+      { href: "/admin/tiers", label: "Customer Tiers", icon: "🏷️", hint: "Tier-level ceilings" },
+      { href: "/admin/discount-rules", label: "Discount Rules", icon: "📋", hint: "Per-category ceilings" },
+      { href: "/admin/approval-ladder", label: "Approval Ladder", icon: "⛓️", hint: "Who reviews, and when" },
     ],
   },
   {
     group: "Catalogue",
     items: [
-      { href: "/admin/products", label: "Products", hint: "Physical and standard products" },
-      { href: "/admin/subscription-products", label: "Subscription Products", hint: "Recurring software and SaaS" },
-      { href: "/admin/services", label: "Services", hint: "Recurring and professional services" },
-      { href: "/admin/price-lists", label: "Price Lists", hint: "Tier and currency pricing" },
-      { href: "/admin/upsell", label: "Upsell Rules", hint: "Co-purchase pairings" },
+      { href: "/admin/products", label: "Products", icon: "📦", hint: "Physical and standard products" },
+      { href: "/admin/subscription-products", label: "Subscription Products", icon: "🔄", hint: "Recurring software and SaaS" },
+      { href: "/admin/services", label: "Services", icon: "🛠️", hint: "Recurring and professional services" },
+      { href: "/admin/price-lists", label: "Price Lists", icon: "💵", hint: "Tier and currency pricing" },
+      { href: "/admin/upsell", label: "Upsell Rules", icon: "⚡", hint: "Co-purchase pairings" },
     ],
   },
   {
     group: "Operations",
     items: [
-      { href: "/admin/warehouses", label: "Warehouses & Stock", hint: "Fulfillment sources" },
-      { href: "/admin/subscriptions", label: "Subscriptions", hint: "Active contracts & billing" },
+      { href: "/admin/warehouses", label: "Warehouses & Stock", icon: "🏬", hint: "Fulfillment sources" },
+      { href: "/admin/subscriptions", label: "Subscriptions", icon: "📑", hint: "Active contracts & billing" },
     ],
   },
 ];
@@ -48,6 +49,7 @@ export default function AdminLayout({ children }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, loading, isAuthenticated } = useAuth();
+  const { collapsed } = useSidebar();
 
   React.useEffect(() => {
     if (!loading && !isAuthenticated) router.push("/login");
@@ -72,8 +74,9 @@ export default function AdminLayout({ children }) {
       {/* Top Header per DESIGN.md §17 & §18: White background, dark text, clean borders */}
       <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-20">
         <div className="flex items-center gap-4">
+          <SidebarToggleButton />
           <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-[6px] bg-[#714B67] text-white flex items-center justify-center font-bold text-xs">
+            <div className="w-8 h-8 rounded-[6px] bg-[#714B67] text-white flex items-center justify-center font-bold text-xs shadow-xs">
               DF
             </div>
             <span className="font-bold text-base text-[#212529]">
@@ -115,16 +118,42 @@ export default function AdminLayout({ children }) {
       )}
 
       <div className="flex-1 flex">
-        {/* Sidebar per DESIGN.md §19 & §20 */}
-        <nav className="w-60 shrink-0 bg-white border-r border-[#E9ECEF] p-4">
-          {SECTIONS.map((section) => (
-            <div key={section.group} className="mb-6">
-              <div className="text-[11px] uppercase tracking-wider text-[#868E96] font-semibold px-3 mb-2">
-                {section.group}
-              </div>
+        {/* Sidebar with collapse toggle transition per DESIGN.md §19 & §20 */}
+        <nav
+          className={`shrink-0 bg-white border-r border-[#E9ECEF] transition-[width,padding] duration-300 ease-in-out ${
+            collapsed ? "w-[68px] p-2" : "w-60 p-4"
+          }`}
+        >
+          {SECTIONS.map((section, sIdx) => (
+            <div key={section.group} className="mb-5">
+              {collapsed ? (
+                sIdx > 0 && <div className="border-t border-[#E9ECEF] my-2 mx-1" title={section.group} />
+              ) : (
+                <div className="text-[11px] uppercase tracking-wider text-[#868E96] font-semibold px-3 mb-2">
+                  {section.group}
+                </div>
+              )}
               <div className="space-y-1">
                 {section.items.map((item) => {
                   const active = pathname === item.href;
+
+                  if (collapsed) {
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        title={`${item.label}\n${item.hint}`}
+                        className={`flex items-center justify-center w-10 h-10 mx-auto rounded-[6px] text-base transition-all my-1 ${
+                          active
+                            ? "bg-[#F3EEF2] text-[#714B67] font-semibold border border-[#714B67]/20 shadow-xs"
+                            : "text-[#495057] hover:bg-[#F8F9FA] hover:text-[#212529]"
+                        }`}
+                      >
+                        <span>{item.icon}</span>
+                      </Link>
+                    );
+                  }
+
                   return (
                     <Link
                       key={item.href}
@@ -135,8 +164,11 @@ export default function AdminLayout({ children }) {
                           : "text-[#495057] hover:bg-[#F8F9FA] hover:text-[#212529]"
                       }`}
                     >
-                      <div className="text-sm">{item.label}</div>
-                      <div className="text-[11px] text-[#6C757D] mt-0.5">{item.hint}</div>
+                      <div className="text-sm flex items-center gap-2">
+                        <span>{item.icon}</span>
+                        <span>{item.label}</span>
+                      </div>
+                      <div className="text-[11px] text-[#6C757D] mt-0.5 pl-6">{item.hint}</div>
                     </Link>
                   );
                 })}
@@ -145,8 +177,9 @@ export default function AdminLayout({ children }) {
           ))}
         </nav>
 
-        <main className="flex-1 p-6 md:p-8 max-w-7xl">{children}</main>
+        <main className="flex-1 p-6 md:p-8 max-w-7xl transition-all duration-300">{children}</main>
       </div>
     </div>
   );
 }
+
