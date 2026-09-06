@@ -17,6 +17,16 @@ const planInputSchema = z.object({
   price: z.number().min(0, "Price must be zero or positive"),
   prorationEnabled: z.boolean().optional().default(true),
   cancellationRefundPercent: z.number().min(0).max(100).optional().default(0),
+  startDate: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => (v && v.trim() ? new Date(v) : null)),
+  endDate: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => (v && v.trim() ? new Date(v) : null)),
   isActive: z.boolean().optional().default(true),
 });
 
@@ -35,6 +45,16 @@ const subscriptionProductSchema = z.object({
   monthlyPrice: z.number().min(0).optional(),
   quarterlyPrice: z.number().min(0).optional(),
   yearlyPrice: z.number().min(0).optional(),
+  startDate: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => (v && v.trim() ? new Date(v) : null)),
+  endDate: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => (v && v.trim() ? new Date(v) : null)),
   plans: z.array(planInputSchema).optional(),
 });
 
@@ -190,6 +210,8 @@ export const createSubscriptionProduct = asyncHandler(async (req, res) => {
         price: basePrice,
         prorationEnabled: true,
         cancellationRefundPercent: 0,
+        startDate: input.startDate ?? null,
+        endDate: input.endDate ?? null,
         isActive: true,
       });
     } else if (interval === "QUARTERLY") {
@@ -200,6 +222,8 @@ export const createSubscriptionProduct = asyncHandler(async (req, res) => {
         price: basePrice,
         prorationEnabled: true,
         cancellationRefundPercent: 50,
+        startDate: input.startDate ?? null,
+        endDate: input.endDate ?? null,
         isActive: true,
       });
     } else if (interval === "YEARLY") {
@@ -210,6 +234,8 @@ export const createSubscriptionProduct = asyncHandler(async (req, res) => {
         price: basePrice,
         prorationEnabled: true,
         cancellationRefundPercent: 75,
+        startDate: input.startDate ?? null,
+        endDate: input.endDate ?? null,
         isActive: true,
       });
     } else if (interval === "MULTI") {
@@ -221,6 +247,8 @@ export const createSubscriptionProduct = asyncHandler(async (req, res) => {
           price: input.monthlyPrice,
           prorationEnabled: true,
           cancellationRefundPercent: 0,
+          startDate: input.startDate ?? null,
+          endDate: input.endDate ?? null,
           isActive: true,
         });
       }
@@ -232,6 +260,8 @@ export const createSubscriptionProduct = asyncHandler(async (req, res) => {
           price: input.quarterlyPrice,
           prorationEnabled: true,
           cancellationRefundPercent: 50,
+          startDate: input.startDate ?? null,
+          endDate: input.endDate ?? null,
           isActive: true,
         });
       }
@@ -243,6 +273,8 @@ export const createSubscriptionProduct = asyncHandler(async (req, res) => {
           price: input.yearlyPrice,
           prorationEnabled: true,
           cancellationRefundPercent: 75,
+          startDate: input.startDate ?? null,
+          endDate: input.endDate ?? null,
           isActive: true,
         });
       }
@@ -257,6 +289,8 @@ export const createSubscriptionProduct = asyncHandler(async (req, res) => {
           price: p.price,
           prorationEnabled: p.prorationEnabled ?? true,
           cancellationRefundPercent: p.cancellationRefundPercent ?? 0,
+          startDate: p.startDate ?? input.startDate ?? null,
+          endDate: p.endDate ?? input.endDate ?? null,
           isActive: true,
         });
       }

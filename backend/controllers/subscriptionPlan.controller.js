@@ -20,6 +20,16 @@ const planSchema = z.object({
   price: z.number().min(0, "Price must be zero or positive"),
   prorationEnabled: z.boolean().optional().default(true),
   cancellationRefundPercent: z.number().min(0).max(100).optional().default(0),
+  startDate: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => (v && v.trim() ? new Date(v) : null)),
+  endDate: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => (v && v.trim() ? new Date(v) : null)),
   isActive: z.boolean().optional().default(true),
 });
 

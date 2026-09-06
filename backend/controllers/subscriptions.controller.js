@@ -147,12 +147,15 @@ export async function createSubscriptionsForOrder(
                         );
                     }
 
-                    // Use the order confirmation time
-                    // as the subscription start.
-                    const startDate =
-                        new Date(
-                            order.confirmedAt
-                        );
+                    // Use plan's configured start date if specified,
+                    // otherwise fall back to order confirmation time.
+                    const startDate = plan.startDate
+                        ? new Date(plan.startDate)
+                        : new Date(order.confirmedAt);
+
+                    const endDate = plan.endDate
+                        ? new Date(plan.endDate)
+                        : null;
 
                     // Calculate the first billing period.
                     const firstPeriod =
@@ -186,6 +189,8 @@ export async function createSubscriptionsForOrder(
                                     plan.price,
 
                                 startDate,
+
+                                endDate,
 
                                 currentPeriodStart:
                                     firstPeriod

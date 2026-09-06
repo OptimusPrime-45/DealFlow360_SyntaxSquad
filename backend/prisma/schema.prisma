@@ -530,6 +530,8 @@ model SubscriptionPlan {
   price                     Decimal         @db.Decimal(14, 2)
   prorationEnabled          Boolean         @default(true) @map("proration_enabled")
   cancellationRefundPercent Decimal         @default(0) @map("cancellation_refund_percent") @db.Decimal(5, 2)
+  startDate                 DateTime?       @map("start_date")
+  endDate                   DateTime?       @map("end_date")
   isActive                  Boolean         @default(true) @map("is_active")
 
   quotationLines QuotationLine[]
@@ -978,6 +980,7 @@ model Subscription {
   unitPrice Decimal            @map("unit_price") @db.Decimal(14, 2)
 
   startDate          DateTime  @map("start_date")
+  endDate            DateTime? @map("end_date")
   currentPeriodStart DateTime  @map("current_period_start")
   currentPeriodEnd   DateTime  @map("current_period_end")
   cancelledAt        DateTime? @map("cancelled_at")

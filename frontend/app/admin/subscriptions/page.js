@@ -255,15 +255,17 @@ export default function SubscriptionsPage() {
       ) : (
         <GroupedTable
           headers={[
-            { label: "Order #", key: "order.orderNumber", className: "w-32 font-mono" },
+            { label: "Order #", key: "order.orderNumber", className: "w-28 font-mono" },
             { label: "Customer", key: "customer.name" },
             { label: "Plan / Product", key: "subscriptionPlan.name" },
-            { label: "Billing Interval", key: "subscriptionPlan.billingInterval", className: "w-32" },
-            { label: "Qty / Seats", key: "quantity", className: "w-24 text-center" },
-            { label: "Rate", key: "unitPrice", className: "w-28" },
-            { label: "Status", key: "status", className: "w-28" },
-            { label: "Renewal Date", key: "currentPeriodEnd", className: "w-32" },
-            { label: "Actions", key: "actions", className: "w-24 text-right" },
+            { label: "Interval", key: "subscriptionPlan.billingInterval", className: "w-24" },
+            { label: "Qty", key: "quantity", className: "w-16 text-center" },
+            { label: "Rate", key: "unitPrice", className: "w-24" },
+            { label: "Status", key: "status", className: "w-24" },
+            { label: "Start Date", key: "startDate", className: "w-28" },
+            { label: "End Date", key: "endDate", className: "w-28" },
+            { label: "Renewal Date", key: "currentPeriodEnd", className: "w-28" },
+            { label: "Actions", key: "actions", className: "w-20 text-right" },
           ]}
           data={filteredSubscriptions}
           getId={(s) => s.id}
@@ -308,6 +310,11 @@ export default function SubscriptionsPage() {
                   {s.subscriptionPlan?.product?.name || s.orderLine?.product?.name || ""}
                 </div>
               </td>
+              <td className="px-4 py-3">
+                <Badge variant={s.subscriptionPlan?.billingInterval === "YEARLY" ? "success" : "info"} size="sm">
+                  {s.subscriptionPlan?.billingInterval}
+                </Badge>
+              </td>
               <td className="px-4 py-3 text-xs text-center font-semibold text-[#495057]">
                 {s.quantity}
               </td>
@@ -315,14 +322,15 @@ export default function SubscriptionsPage() {
                 ₹{Number(s.unitPrice).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
               </td>
               <td className="px-4 py-3">
-                <Badge variant={s.subscriptionPlan?.billingInterval === "YEARLY" ? "success" : "info"} size="sm">
-                  {s.subscriptionPlan?.billingInterval}
-                </Badge>
-              </td>
-              <td className="px-4 py-3">
                 <Badge variant={statusVariant[s.status] || "neutral"} size="sm">
                   {s.status}
                 </Badge>
+              </td>
+              <td className="px-4 py-3 text-xs text-[#28A745] font-medium">
+                {s.startDate ? new Date(s.startDate).toLocaleDateString() : "—"}
+              </td>
+              <td className="px-4 py-3 text-xs text-[#E67E22] font-medium">
+                {s.endDate ? new Date(s.endDate).toLocaleDateString() : "Open"}
               </td>
               <td className="px-4 py-3 text-xs text-[#6C757D]">
                 {new Date(s.currentPeriodEnd).toLocaleDateString()}

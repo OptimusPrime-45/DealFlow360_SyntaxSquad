@@ -40,6 +40,8 @@ const EMPTY_SUBSCRIPTION = {
   monthlyPrice: "",
   quarterlyPrice: "",
   yearlyPrice: "",
+  startDate: "",
+  endDate: "",
 };
 
 export default function SubscriptionProductsPage() {
@@ -92,6 +94,8 @@ export default function SubscriptionProductsPage() {
       description: form.description?.trim() || null,
       categoryId: form.categoryId,
       billingInterval: form.billingInterval,
+      startDate: form.startDate ? new Date(form.startDate).toISOString() : undefined,
+      endDate: form.endDate ? new Date(form.endDate).toISOString() : undefined,
     };
 
     if (form.billingInterval === "MULTI") {
@@ -378,6 +382,24 @@ export default function SubscriptionProductsPage() {
                 />
               </div>
             )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 bg-[#F8F9FA] rounded-[6px] border border-[#E9ECEF]">
+              <Field
+                label="Plan Start Date (Optional)"
+                type="date"
+                value={form.startDate}
+                onChange={(v) => setForm((f) => ({ ...f, startDate: v }))}
+                hint="When this subscription plan becomes active"
+              />
+              <Field
+                label="Plan End Date (Optional)"
+                type="date"
+                min={form.startDate || undefined}
+                value={form.endDate}
+                onChange={(v) => setForm((f) => ({ ...f, endDate: v }))}
+                hint="Validity expiration or promotional cutoff date"
+              />
+            </div>
 
             <div className="flex items-center justify-between gap-4">
               <Field
