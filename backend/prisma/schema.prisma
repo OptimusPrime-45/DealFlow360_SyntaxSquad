@@ -461,6 +461,8 @@ model Product {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([categoryId])
+  @@index([name])
+  @@index([productType, isActive])
   @@map("products")
 }
 
@@ -686,6 +688,9 @@ model Quotation {
   @@index([customerId])
   @@index([salesRepId])
   @@index([status, lastActivityAt]) // stalled-deal + pipeline queries
+  @@index([status, customerId])
+  @@index([status, salesRepId])
+  @@index([createdAt])
   @@map("quotations")
 }
 
@@ -985,6 +990,9 @@ model Subscription {
 
   @@index([orderId])
   @@index([customerId])
+  @@index([status])
+  @@index([subscriptionPlanId])
+  @@index([status, customerId])
   @@map("subscriptions")
 }
 

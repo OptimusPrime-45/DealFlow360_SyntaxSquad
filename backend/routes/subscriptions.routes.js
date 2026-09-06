@@ -5,7 +5,8 @@ import express from "express";
 import {
     createSubscriptionsForOrder,
     getSubscriptionsForOrder,
-    cancelSubscription
+    cancelSubscription,
+    listSubscriptions
 } from "../controllers/subscriptions.controller.js";
 
 import { authenticate, requireRole } from "../middleware/auth.middleware.js";
@@ -20,6 +21,26 @@ router.use(authenticate);
 // backorder decisions". Reps may READ progress on their own deals; acting on
 // fulfillment and billing is an operations decision.
 const canOperate = requireRole("ADMIN", "FINANCE", "SALES_MANAGER");
+
+// List all subscriptions with search, filter, and relations
+router.get(
+    "/",
+    async (req, res) => {
+        try {
+            const result = await listSubscriptions(req.query);
+            return res.status(200).json({
+                success: true,
+                data: result
+            });
+        } catch (error) {
+            console.error("Subscription list error:", error);
+            return res.status(400).json({
+                success: false,
+                message: error.message
+            });
+        }
+    }
+);
 
 
 

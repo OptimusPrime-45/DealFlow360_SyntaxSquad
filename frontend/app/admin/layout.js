@@ -39,6 +39,7 @@ const SECTIONS = [
     group: "Operations",
     items: [
       { href: "/admin/warehouses", label: "Warehouses & Stock", hint: "Fulfillment sources" },
+      { href: "/admin/subscriptions", label: "Subscriptions", hint: "Active contracts & billing" },
     ],
   },
 ];
