@@ -138,14 +138,20 @@ export default function SubscriptionsPage() {
     );
   };
 
+  const cancellableSubs = useMemo(() => {
+    return filteredSubscriptions.filter(
+      (s) => selectedIds.has(s.id) && s.status !== "CANCELLED" && s.status !== "EXPIRED"
+    );
+  }, [filteredSubscriptions, selectedIds]);
+
   const handleBatchCancel = async () => {
-    if (!window.confirm(`Are you sure you want to cancel ${selectedIds.size} selected subscriptions?`)) return;
+    if (cancellableSubs.length === 0) return;
+    if (!window.confirm(`Are you sure you want to cancel ${cancellableSubs.length} selected subscription(s)?`)) return;
     try {
-      const ids = Array.from(selectedIds);
-      for (const id of ids) {
-        await apiClient.post(`/subscriptions/${id}/cancel`);
+      for (const s of cancellableSubs) {
+        await apiClient.post(`/subscriptions/${s.id}/cancel`);
       }
-      setNotice(`Successfully cancelled ${ids.length} subscription(s).`);
+      setNotice(`Successfully cancelled ${cancellableSubs.length} subscription(s).`);
       setSelectedIds(new Set());
       fetchSubscriptions();
     } catch (err) {
@@ -231,17 +237,21 @@ export default function SubscriptionsPage() {
         onSelectAll={() => setSelectedIds(new Set(filteredSubscriptions.map((s) => s.id)))}
         onClearSelection={() => setSelectedIds(new Set())}
         actions={[
+          ...(cancellableSubs.length > 0
+            ? [
+                {
+                  label: `Cancel Selected (${cancellableSubs.length})`,
+                  icon: "✕",
+                  onClick: handleBatchCancel,
+                  variant: "danger",
+                },
+              ]
+            : []),
           {
             label: "Export Selected (CSV)",
             icon: "📥",
             onClick: handleExportSelected,
             variant: "secondary",
-          },
-          {
-            label: `Cancel Selected (${selectedIds.size})`,
-            icon: "✕",
-            onClick: handleBatchCancel,
-            variant: "danger",
           },
         ]}
       />

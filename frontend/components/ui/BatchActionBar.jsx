@@ -54,9 +54,13 @@ export function BatchActionBar({
             size="sm"
             onClick={act.onClick}
             disabled={act.disabled}
-            className={`text-xs py-1 px-3 ${
+            className={`text-xs py-1 px-3 transition-colors ${
               act.variant === "danger"
                 ? "bg-[#DC3545] hover:bg-[#BB2D3B] text-white border-none"
+                : act.variant === "primary"
+                ? "bg-[#28A745] hover:bg-[#218838] text-white border-none font-semibold"
+                : act.variant === "warning"
+                ? "bg-[#E67E22] hover:bg-[#D35400] text-white border-none"
                 : "bg-white/10 hover:bg-white/20 text-white border-white/20"
             }`}
           >

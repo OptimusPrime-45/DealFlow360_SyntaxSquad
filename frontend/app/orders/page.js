@@ -174,17 +174,23 @@ export default function OrdersListPage() {
     );
   };
 
+  const closableOrders = useMemo(() => {
+    return filteredOrders.filter(
+      (o) => visibleSelectedIds.has(o.id) && o.status !== "COMPLETED" && o.status !== "CANCELLED"
+    );
+  }, [filteredOrders, visibleSelectedIds]);
+
   const handleBatchCloseDeals = async () => {
-    if (!confirm(`Close deals and mark ${visibleSelectedIds.size} selected orders as COMPLETED?`)) return;
+    if (closableOrders.length === 0) return;
+    if (!confirm(`Close deals and mark ${closableOrders.length} selected order(s) as COMPLETED?`)) return;
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const ids = Array.from(visibleSelectedIds);
-      for (const id of ids) {
-        await apiClient.post(`/orders/${id}/close`, {});
+      for (const o of closableOrders) {
+        await apiClient.post(`/orders/${o.id}/close`, {});
       }
-      setNotice(`Successfully marked ${ids.length} orders as COMPLETED!`);
+      setNotice(`Successfully marked ${closableOrders.length} order(s) as COMPLETED!`);
       setSelectedIds(new Set());
       await loadOrders();
     } catch (err) {
@@ -321,17 +327,21 @@ export default function OrdersListPage() {
           onSelectAll={() => setSelectedIds(new Set(filteredOrders.map((o) => o.id)))}
           onClearSelection={() => setSelectedIds(new Set())}
           actions={[
+            ...(closableOrders.length > 0
+              ? [
+                  {
+                    label: `Close Deals (${closableOrders.length})`,
+                    icon: "✓",
+                    onClick: handleBatchCloseDeals,
+                    variant: "primary",
+                  },
+                ]
+              : []),
             {
               label: "Export Selected (CSV)",
               icon: "📥",
               onClick: handleExportSelected,
               variant: "secondary",
-            },
-            {
-              label: `Batch Close Deals (${visibleSelectedIds.size})`,
-              icon: "✓",
-              onClick: handleBatchCloseDeals,
-              variant: "primary",
             },
           ]}
         />

@@ -242,6 +242,33 @@ export default function PlansPage() {
     );
   };
 
+  // Batch Delete Plans
+  const handleBatchDelete = async () => {
+    const selectedCount = selectedIds.size;
+    if (selectedCount === 0) return;
+    if (!confirm(`Are you sure you want to delete ${selectedCount} selected subscription plan(s)? This action cannot be undone.`)) {
+      return;
+    }
+    const idsToDelete = Array.from(selectedIds);
+    let successCount = 0;
+    let failedCount = 0;
+    for (const id of idsToDelete) {
+      try {
+        await apiClient.delete(`/subscription-plans/${id}`);
+        successCount++;
+      } catch (err) {
+        failedCount++;
+      }
+    }
+    setSelectedIds(new Set());
+    await plans.reload();
+    if (failedCount > 0) {
+      plans.setError(`Deleted ${successCount} plan(s), but ${failedCount} could not be deleted (they may be actively used by subscriptions).`);
+    } else {
+      plans.setNotice(`Successfully deleted ${successCount} plan(s).`);
+    }
+  };
+
   const filterGroups = [
     {
       label: "Billing Duration",
@@ -329,6 +356,12 @@ export default function PlansPage() {
         onSelectAll={() => setSelectedIds(new Set(filteredPlans.map((p) => p.id)))}
         onClearSelection={() => setSelectedIds(new Set())}
         actions={[
+          {
+            label: `Delete Selected (${selectedIds.size})`,
+            icon: "🗑️",
+            onClick: handleBatchDelete,
+            variant: "danger",
+          },
           {
             label: "Export Selected (CSV)",
             icon: "📥",
