@@ -377,7 +377,7 @@ export default function QuotationsPage() {
         <OdooControlPanel
           searchTerm={searchTerm}
           onSearchChange={setSearchTerm}
-          placeholder="Search by quote #, customer, sales rep, or status (B-Tree indexed)..."
+          placeholder="Search by quote #, customer, sales rep, or status."
           filterGroups={filterGroups}
           activeFilters={activeFilters}
           onFilterChange={(key, val) =>

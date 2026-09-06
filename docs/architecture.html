@@ -1,0 +1,724 @@
+<title>DealFlow360 Architecture</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@600;700&display=swap">
+<style>
+  /* ── Tokens: complete light palette on bare :root ─────────────────────── */
+  :root {
+    --ground:    #FAF8F9;
+    --surface:   #FFFFFF;
+    --surface-2: #F3EFF1;
+    --ink:       #241D22;
+    --ink-soft:  #453B41;
+    --muted:     #6E626A;
+    --line:      #E4DAE0;
+    --line-soft: #EFE8EC;
+    --brand:     #714B67;
+    --brand-ink: #FFFFFF;
+    --brand-dim: #A98BA0;
+    --ok:        #2E7D4F;
+    --warn:      #B4670F;
+    --risk:      #B93B2E;
+    --shadow:    0 1px 2px rgba(36, 29, 34, .06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:    #161215;
+      --surface:   #1E191D;
+      --surface-2: #262029;
+      --ink:       #F3EDF1;
+      --ink-soft:  #D8CCD3;
+      --muted:     #A2939C;
+      --line:      #362E34;
+      --line-soft: #2B242A;
+      --brand:     #C99CBB;
+      --brand-ink: #1B1219;
+      --brand-dim: #8A6A80;
+      --ok:        #67C08C;
+      --warn:      #E0A45C;
+      --risk:      #E88A7D;
+      --shadow:    0 1px 2px rgba(0, 0, 0, .35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:    #161215;
+    --surface:   #1E191D;
+    --surface-2: #262029;
+    --ink:       #F3EDF1;
+    --ink-soft:  #D8CCD3;
+    --muted:     #A2939C;
+    --line:      #362E34;
+    --line-soft: #2B242A;
+    --brand:     #C99CBB;
+    --brand-ink: #1B1219;
+    --brand-dim: #8A6A80;
+    --ok:        #67C08C;
+    --warn:      #E0A45C;
+    --risk:      #E88A7D;
+    --shadow:    0 1px 2px rgba(0, 0, 0, .35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1140px;
+    margin: 0 auto;
+    padding: 56px 28px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 60px;
+  }
+
+  .prose { max-width: 68ch; }
+
+  /* ── Masthead ─────────────────────────────────────────────────────────── */
+  .masthead { display: flex; flex-direction: column; gap: 18px; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--brand);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-weight: 700;
+    font-size: clamp(34px, 5vw, 50px);
+    line-height: 1.05;
+    letter-spacing: -.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: 17px;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0;
+  }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .fact { background: var(--surface); padding: 13px 15px; }
+  .fact dt {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 4px;
+  }
+  .fact dd {
+    margin: 0;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 19px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+
+  /* ── Sections ─────────────────────────────────────────────────────────── */
+  section { display: flex; flex-direction: column; gap: 20px; }
+
+  h2 {
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-weight: 600;
+    font-size: 27px;
+    letter-spacing: -.012em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  h3 {
+    font-family: "IBM Plex Sans", sans-serif;
+    font-weight: 600;
+    font-size: 15px;
+    margin: 0 0 5px;
+  }
+  p { margin: 0 0 14px; }
+  p:last-child { margin-bottom: 0; }
+
+  .sec-head { display: flex; flex-direction: column; gap: 7px; }
+
+  /* ── Figures ──────────────────────────────────────────────────────────── */
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 26px 22px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .scroller { overflow-x: auto; }
+  figure svg { display: block; width: 100%; min-width: 720px; height: auto; color: var(--ink); }
+  figcaption {
+    font-size: 13px;
+    color: var(--muted);
+    border-top: 1px solid var(--line-soft);
+    padding-top: 13px;
+    max-width: 78ch;
+  }
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ── Layer list: a real sequence, so it is numbered ───────────────────── */
+  .layers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+  .layers li {
+    display: grid;
+    grid-template-columns: 30px 168px 1fr;
+    gap: 18px;
+    align-items: baseline;
+    padding: 13px 0;
+    border-top: 1px solid var(--line-soft);
+  }
+  .layers li:first-child { border-top: 0; }
+  .layers .n {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--brand);
+    font-variant-numeric: tabular-nums;
+  }
+  .layers .what {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  .layers .why { font-size: 14px; color: var(--ink-soft); }
+
+  /* ── Model inventory ──────────────────────────────────────────────────── */
+  .groups {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 22px 30px;
+  }
+  .group h3 {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--line);
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    background: var(--surface-2);
+    color: var(--ink-soft);
+    padding: 3px 7px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .chip.key { background: var(--brand); color: var(--brand-ink); font-weight: 500; }
+
+  /* ── Next: ranked, so numbering encodes priority ──────────────────────── */
+  .next { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .next li {
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 16px;
+    padding: 16px 0;
+    border-top: 1px solid var(--line-soft);
+  }
+  .next li:first-child { border-top: 0; }
+  .rank {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--brand);
+    font-variant-numeric: tabular-nums;
+    padding-top: 1px;
+  }
+  .next .body { display: flex; flex-direction: column; gap: 5px; }
+  .next .title-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .next .why { font-size: 14px; color: var(--ink-soft); margin: 0; }
+  .next code {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .89em;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+
+  .tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 9.5px;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 2px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+  }
+  .tag.bonus { color: var(--ok); }
+  .tag.debt  { color: var(--warn); }
+  .tag.scale { color: var(--brand); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 22px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    color: var(--muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 26px;
+  }
+
+  @media (max-width: 640px) {
+    .page { padding: 40px 18px 72px; gap: 46px; }
+    .layers li { grid-template-columns: 24px 1fr; }
+    .layers .why { grid-column: 2; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">Deliverable §8 · Architecture</p>
+    <h1>DealFlow360</h1>
+    <p class="standfirst">
+      A B2B sales platform where the <em>system</em> decides what needs approval — not the rep.
+      Pricing, ceilings, routing, warehouse splitting and billing are pure functions the API calls;
+      every verdict it reaches is written down and can be replayed.
+    </p>
+    <dl class="facts">
+      <div class="fact"><dt>Prisma models</dt><dd>36</dd></div>
+      <div class="fact"><dt>Enums</dt><dd>21</dd></div>
+      <div class="fact"><dt>Route modules</dt><dd>22</dd></div>
+      <div class="fact"><dt>Pure rule fns</dt><dd>14</dd></div>
+      <div class="fact"><dt>App pages</dt><dd>28</dd></div>
+    </dl>
+  </header>
+
+  <!-- ══ FIGURE 1 ══════════════════════════════════════════════════════ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Figure 1 — Module flow</p>
+      <h2>The governed path of a quotation</h2>
+    </div>
+
+    <figure>
+      <div class="scroller">
+        <svg viewBox="0 0 1040 420" role="img"
+             aria-label="A quotation moves left to right through the quotation builder, governance engine, approval chain, order and fulfillment, and invoicing. Each stage names the pure rule function that decides it. An approved quote is sent to the customer portal; a counter-offer loops back into the governance engine to be re-scored and re-routed. Deal health and the audit ledger observe every stage.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <!-- customer portal -->
+          <rect x="390" y="24" width="260" height="52" rx="3"
+                fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 3" opacity=".75"/>
+          <text x="520" y="46" text-anchor="middle" font-family="IBM Plex Sans, sans-serif"
+                font-size="13" font-weight="600" fill="currentColor">Customer Portal</text>
+          <text x="520" y="63" text-anchor="middle" font-family="IBM Plex Mono, monospace"
+                font-size="10" fill="currentColor" opacity=".68">restricted view · line-level counters</text>
+
+          <!-- portal arrows -->
+          <line x1="515" y1="178" x2="515" y2="80" stroke="currentColor" stroke-width="1.5"
+                marker-end="url(#ar)" opacity=".8"/>
+          <text x="527" y="128" font-family="IBM Plex Mono, monospace" font-size="10"
+                fill="currentColor" opacity=".75">approved quote sent</text>
+
+          <path d="M390,50 H310 V176" fill="none" stroke="#714B67" stroke-width="2"
+                marker-end="url(#ar)"/>
+          <text x="300" y="40" text-anchor="end" font-family="IBM Plex Mono, monospace"
+                font-size="10" fill="#714B67" font-weight="500">counter-offer</text>
+          <text x="300" y="54" text-anchor="end" font-family="IBM Plex Mono, monospace"
+                font-size="10" fill="#714B67" font-weight="500">re-enters approval</text>
+
+          <!-- spine boxes -->
+          <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" font-weight="600">
+            <rect x="30"  y="180" width="150" height="64" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <text x="105" y="207" text-anchor="middle" fill="currentColor">Quotation</text>
+            <text x="105" y="224" text-anchor="middle" fill="currentColor">Builder</text>
+
+            <rect x="235" y="180" width="150" height="64" rx="3" fill="#714B67" stroke="#714B67" stroke-width="1.5"/>
+            <text x="310" y="207" text-anchor="middle" fill="#FFFFFF">Governance</text>
+            <text x="310" y="224" text-anchor="middle" fill="#FFFFFF">Engine</text>
+
+            <rect x="440" y="180" width="150" height="64" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <text x="515" y="207" text-anchor="middle" fill="currentColor">Approval</text>
+            <text x="515" y="224" text-anchor="middle" fill="currentColor">Chain</text>
+
+            <rect x="645" y="180" width="150" height="64" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <text x="720" y="207" text-anchor="middle" fill="currentColor">Order &amp;</text>
+            <text x="720" y="224" text-anchor="middle" fill="currentColor">Fulfillment</text>
+
+            <rect x="850" y="180" width="150" height="64" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <text x="925" y="207" text-anchor="middle" fill="currentColor">Invoicing &amp;</text>
+            <text x="925" y="224" text-anchor="middle" fill="currentColor">Billing</text>
+          </g>
+
+          <!-- spine arrows -->
+          <g stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)">
+            <line x1="180" y1="212" x2="233" y2="212"/>
+            <line x1="385" y1="212" x2="438" y2="212"/>
+            <line x1="590" y1="212" x2="643" y2="212"/>
+            <line x1="795" y1="212" x2="848" y2="212"/>
+          </g>
+          <g font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="middle"
+             fill="currentColor" opacity=".72">
+            <text x="206" y="205">scores</text>
+            <text x="411" y="205">routes</text>
+            <text x="616" y="205">confirms</text>
+            <text x="821" y="205">bills</text>
+          </g>
+
+          <!-- rule functions -->
+          <g font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="middle"
+             fill="currentColor" opacity=".7">
+            <text x="105" y="264">recalculate</text>
+            <text x="105" y="277">Quotation()</text>
+            <text x="310" y="264">resolveCeiling</text>
+            <text x="310" y="277">scoreQuotation</text>
+            <text x="515" y="264">selectApproval</text>
+            <text x="515" y="277">PolicySteps</text>
+            <text x="720" y="264">selectWarehouses</text>
+            <text x="720" y="277">allocateStock</text>
+            <text x="925" y="264">generateBilling</text>
+            <text x="925" y="277">Schedule</text>
+          </g>
+
+          <!-- observability -->
+          <g stroke="currentColor" stroke-width="1.3" stroke-dasharray="4 3"
+             marker-end="url(#ar)" opacity=".55">
+            <line x1="310" y1="293" x2="310" y2="336"/>
+            <line x1="515" y1="293" x2="515" y2="336"/>
+            <line x1="720" y1="293" x2="720" y2="336"/>
+            <line x1="925" y1="293" x2="925" y2="336"/>
+          </g>
+          <rect x="235" y="340" width="765" height="52" rx="3"
+                fill="none" stroke="currentColor" stroke-width="1.5" opacity=".8"/>
+          <text x="617" y="362" text-anchor="middle" font-family="IBM Plex Sans, sans-serif"
+                font-size="12.5" font-weight="600" fill="currentColor">Deal Health Signals · Append-only Audit Ledger</text>
+          <text x="617" y="379" text-anchor="middle" font-family="IBM Plex Mono, monospace"
+                font-size="9.5" fill="currentColor" opacity=".68">observes every stage · never mutates it</text>
+        </svg>
+      </div>
+      <figcaption>
+        Each stage names the <b>pure function</b> that decides it — the rules live in
+        <code>backend/rules/</code> with no database access, so they can be tested against fixtures
+        and replayed. The purple return path is the load-bearing one: a customer counter-offer is
+        re-priced and re-routed through <b>the same</b> routing service the rep's own submission uses,
+        so a negotiated deal can never be judged by looser rules than the original.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ══ LAYERS ════════════════════════════════════════════════════════ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Request path</p>
+      <h2>What each layer is allowed to do</h2>
+    </div>
+    <div class="prose">
+      <p>
+        The constraint that keeps this honest: business rules never touch Prisma, and controllers never
+        re-implement a rule. A verdict has exactly one source.
+      </p>
+    </div>
+    <ol class="layers">
+      <li><span class="n">01</span><span class="what">routes/</span>
+        <span class="why">Mount paths, attach <code>authenticate</code> and <code>requireRole</code>. No logic.</span></li>
+      <li><span class="n">02</span><span class="what">controllers/</span>
+        <span class="why">Validate input with Zod, load records, shape the response. Orchestration only.</span></li>
+      <li><span class="n">03</span><span class="what">services/</span>
+        <span class="why">Multi-step transactions that must not diverge — pricing recalculation and approval routing.</span></li>
+      <li><span class="n">04</span><span class="what">rules/</span>
+        <span class="why">Pure decisions: ceiling resolution, blended risk scoring, warehouse selection, proration. Deterministic, no I/O.</span></li>
+      <li><span class="n">05</span><span class="what">prisma/</span>
+        <span class="why">The 36-model schema. Snapshot columns freeze the ceiling and cost that applied at write time.</span></li>
+    </ol>
+  </section>
+
+  <!-- ══ FIGURE 2 ══════════════════════════════════════════════════════ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Figure 2 — Data model</p>
+      <h2>The four-entity spine</h2>
+    </div>
+
+    <figure>
+      <div class="scroller">
+        <svg viewBox="0 0 1080 450" role="img"
+             aria-label="Four spine entities run left to right: Customer raises Quotation, Quotation confirms one-to-one into Order, Order is billed by Invoice. Each spine entity owns a column of dependent tables below it: Customer with CustomerTier, DiscountRule and PriceList; Quotation with QuotationLine, QuotationApproval and Negotiation; Order with OrderLine, FulfillmentAllocation and Subscription; Invoice with InvoiceLine, Payment and CreditNote.">
+          <defs>
+            <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <!-- spine -->
+          <g font-family="IBM Plex Mono, monospace">
+            <rect x="40"  y="40" width="200" height="56" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/>
+            <text x="140" y="65" text-anchor="middle" font-size="13.5" font-weight="600" fill="currentColor">Customer</text>
+            <text x="140" y="81" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".65">+ PortalToken</text>
+
+            <rect x="320" y="40" width="200" height="56" rx="3" fill="#714B67" stroke="#714B67" stroke-width="1.6"/>
+            <text x="420" y="65" text-anchor="middle" font-size="13.5" font-weight="600" fill="#FFFFFF">Quotation</text>
+            <text x="420" y="81" text-anchor="middle" font-size="9.5" fill="#FFFFFF" opacity=".82">the governed object</text>
+
+            <rect x="600" y="40" width="200" height="56" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/>
+            <text x="700" y="65" text-anchor="middle" font-size="13.5" font-weight="600" fill="currentColor">Order</text>
+            <text x="700" y="81" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".65">execution record</text>
+
+            <rect x="870" y="40" width="180" height="56" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/>
+            <text x="960" y="65" text-anchor="middle" font-size="13.5" font-weight="600" fill="currentColor">Invoice</text>
+            <text x="960" y="81" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".65">+ BillingSchedule</text>
+          </g>
+
+          <!-- spine relations -->
+          <g stroke="currentColor" stroke-width="1.6" marker-end="url(#ar2)">
+            <line x1="240" y1="68" x2="318" y2="68"/>
+            <line x1="520" y1="68" x2="598" y2="68"/>
+            <line x1="800" y1="68" x2="868" y2="68"/>
+          </g>
+          <g font-family="IBM Plex Mono, monospace" font-size="9.5" text-anchor="middle" fill="currentColor">
+            <text x="279" y="60" opacity=".8">raises</text>
+            <text x="279" y="86" opacity=".6">1:N</text>
+            <text x="559" y="60" opacity=".8">confirms</text>
+            <text x="559" y="86" opacity=".6">1:1</text>
+            <text x="834" y="60" opacity=".8">billed by</text>
+            <text x="834" y="86" opacity=".6">1:N</text>
+          </g>
+
+          <!-- ownership rails -->
+          <g fill="none" stroke="currentColor" stroke-width="1.3" opacity=".5">
+            <path d="M140,96 V126 H18 V396"/>
+            <path d="M18,196 H40"/><path d="M18,296 H40"/><path d="M18,396 H40"/>
+            <path d="M420,96 V126 H298 V396"/>
+            <path d="M298,196 H320"/><path d="M298,296 H320"/><path d="M298,396 H320"/>
+            <path d="M700,96 V126 H578 V396"/>
+            <path d="M578,196 H600"/><path d="M578,296 H600"/><path d="M578,396 H600"/>
+            <path d="M960,96 V126 H848 V396"/>
+            <path d="M848,196 H870"/><path d="M848,296 H870"/><path d="M848,396 H870"/>
+          </g>
+
+          <!-- dependents -->
+          <g font-family="IBM Plex Mono, monospace">
+            <g fill="currentColor">
+              <rect x="40" y="170" width="200" height="52" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".85"/>
+              <text x="55" y="192" font-size="11.5" font-weight="500">CustomerTier</text>
+              <text x="55" y="208" font-size="9.5" opacity=".62">N:1 · ceiling source</text>
+
+              <rect x="40" y="270" width="200" height="52" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".85"/>
+              <text x="55" y="292" font-size="11.5" font-weight="500">DiscountRule</text>
+              <text x="55" y="308" font-size="9.5" opacity=".62">tier × category override</text>
+
+              <rect x="40" y="370" width="200" height="52" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".85"/>
+              <text x="55" y="392" font-size="11.5" font-weight="500">PriceList</text>
+              <text x="55" y="408" font-size="9.5" opacity=".62">tier-based pricing</text>
+
+              <rect x="320" y="170" width="200" height="52" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".85"/>
+              <text x="335" y="192" font-size="11.5" font-weight="500">QuotationLine</text>
+              <text x="335" y="208" font-size="9.5" opacity=".62">1:N · snapshots ceiling</text>
+
+              <rect x="320" y="270" width="200" height="52" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".85"/>
+              <text x="335" y="292" font-size="11.5" font-weight="500">QuotationApproval</text>
+              <text x="335" y="308" font-size="9.5" opacity=".62">1:N cycles → Steps</text>
+
+              <rect x="320" y="370" width="200" height="52" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".85"/>
+              <text x="335" y="392" font-size="11.5" font-weight="500">Negotiation</text>
+              <text x="335" y="408" font-size="9.5" opacity=".62">1:N · portal counters</text>
+
+              <rect x="600" y="170" width="200" height="52" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".85"/>
+              <text x="615" y="192" font-size="11.5" font-weight="500">OrderLine</text>
+              <text x="615" y="208" font-size="9.5" opacity=".62">1:1 back to quote line</text>
+
+              <rect x="600" y="270" width="200" height="52" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".85"/>
+              <text x="615" y="292" font-size="11.5" font-weight="500">FulfillmentAllocation</text>
+              <text x="615" y="308" font-size="9.5" opacity=".62">1:N → Warehouse · Inventory</text>
+
+              <rect x="600" y="370" width="200" height="52" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".85"/>
+              <text x="615" y="392" font-size="11.5" font-weight="500">Subscription</text>
+              <text x="615" y="408" font-size="9.5" opacity=".62">1:N → BillingSchedule</text>
+
+              <rect x="870" y="170" width="180" height="52" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".85"/>
+              <text x="885" y="192" font-size="11.5" font-weight="500">InvoiceLine</text>
+              <text x="885" y="208" font-size="9.5" opacity=".62">1:N</text>
+
+              <rect x="870" y="270" width="180" height="52" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".85"/>
+              <text x="885" y="292" font-size="11.5" font-weight="500">Payment</text>
+              <text x="885" y="308" font-size="9.5" opacity=".62">1:N · sets amountPaid</text>
+
+              <rect x="870" y="370" width="180" height="52" rx="2" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".85"/>
+              <text x="885" y="392" font-size="11.5" font-weight="500">CreditNote</text>
+              <text x="885" y="408" font-size="9.5" opacity=".62">1:N · partial refunds</text>
+            </g>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Twelve load-bearing tables of thirty-six. The spine is deliberately narrow — a
+        <b>Quotation</b> becomes exactly one <b>Order</b>, which is where the governed decision stops
+        being negotiable. <code>QuotationLine</code> stores <code>effectiveCeilingPercent</code> and
+        <code>unitCost</code> as snapshots, which is why an approval from last week still explains
+        itself after an admin lowers a ceiling today. <code>DealHealthSignal</code> and
+        <code>AuditLog</code> reference <code>quotationId</code> across every track and are omitted
+        here for legibility.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ══ INVENTORY ═════════════════════════════════════════════════════ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Schema inventory</p>
+      <h2>All 36 models, by track</h2>
+    </div>
+    <div class="groups">
+      <div class="group">
+        <h3>Identity &amp; access</h3>
+        <div class="chips"><span class="chip">Role</span><span class="chip">User</span><span class="chip key">Customer</span><span class="chip">PortalToken</span></div>
+      </div>
+      <div class="group">
+        <h3>Governance</h3>
+        <div class="chips"><span class="chip">GovernanceSetting</span><span class="chip">CustomerTier</span><span class="chip">DiscountRule</span><span class="chip">ApprovalPolicy</span><span class="chip">ApprovalPolicyStep</span></div>
+      </div>
+      <div class="group">
+        <h3>Catalogue</h3>
+        <div class="chips"><span class="chip">ProductCategory</span><span class="chip">Product</span><span class="chip">ProductVariant</span><span class="chip">PriceList</span><span class="chip">PriceListItem</span><span class="chip">SubscriptionPlan</span><span class="chip">CoPurchaseRule</span></div>
+      </div>
+      <div class="group">
+        <h3>Inventory</h3>
+        <div class="chips"><span class="chip">Warehouse</span><span class="chip">WarehouseShippingWeight</span><span class="chip">Inventory</span></div>
+      </div>
+      <div class="group">
+        <h3>Quote &amp; approval</h3>
+        <div class="chips"><span class="chip key">Quotation</span><span class="chip">QuotationLine</span><span class="chip">QuotationApproval</span><span class="chip">QuotationApprovalStep</span><span class="chip">Negotiation</span><span class="chip">NegotiationRequest</span></div>
+      </div>
+      <div class="group">
+        <h3>Execution &amp; billing</h3>
+        <div class="chips"><span class="chip key">Order</span><span class="chip">OrderLine</span><span class="chip">FulfillmentAllocation</span><span class="chip">Subscription</span><span class="chip">BillingSchedule</span><span class="chip key">Invoice</span><span class="chip">InvoiceLine</span><span class="chip">Payment</span><span class="chip">CreditNote</span></div>
+      </div>
+      <div class="group">
+        <h3>Observability</h3>
+        <div class="chips"><span class="chip">DealHealthSignal</span><span class="chip">AuditLog</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ NEXT ══════════════════════════════════════════════════════════ -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Deliverable §8 · What we would build next</p>
+      <h2>Ranked by what the demo already exposes</h2>
+    </div>
+    <div class="prose">
+      <p>
+        Ordered by how visible the gap is to someone using the product, not by how interesting it is
+        to build. The first two are things a careful reviewer would notice inside five minutes.
+      </p>
+    </div>
+
+    <ol class="next">
+      <li>
+        <span class="rank">01</span>
+        <div class="body">
+          <div class="title-row"><h3>Deliver the nudge, don't just record it</h3><span class="tag debt">Debt</span></div>
+          <p class="why">
+            A nudge writes a real <code>DEAL_NUDGE_SENT</code> row to the audit ledger with actor,
+            target rep and days-inactive — but the rep only sees it if they open the dashboard.
+            There is no notification model, so the next step is an in-app inbox plus email, with the
+            existing 12-hour cooldown as the send policy.
+          </p>
+        </div>
+      </li>
+      <li>
+        <span class="rank">02</span>
+        <div class="body">
+          <div class="title-row"><h3>Per-category discount baselines</h3><span class="tag scale">Accuracy</span></div>
+          <p class="why">
+            The anomaly detector compares a quote against the rep's own historical average across all
+            settled deals. A rep who sells mostly thin-margin services has a legitimately higher
+            baseline than one selling hardware, so the honest next cut is a baseline per rep
+            <em>per category</em>, falling back to the blended figure below the sample threshold.
+          </p>
+        </div>
+      </li>
+      <li>
+        <span class="rank">03</span>
+        <div class="body">
+          <div class="title-row"><h3>Multi-currency on price lists</h3><span class="tag bonus">Spec bonus</span></div>
+          <p class="why">
+            <code>PriceList.currency</code> already exists and defaults to <code>INR</code>, but every
+            total is summed as if one currency. Real support means an FX rate table, a currency
+            snapshot on the quotation, and money formatting driven by the quote rather than the locale.
+          </p>
+        </div>
+      </li>
+      <li>
+        <span class="rank">04</span>
+        <div class="body">
+          <div class="title-row"><h3>Product variants through the whole flow</h3><span class="tag debt">Debt</span></div>
+          <p class="why">
+            <code>ProductVariant</code> is modelled and <code>QuotationLine.productVariantId</code> is
+            wired, but the builder and the inventory allocator both reason at product level. Variants
+            need their own stock rows before "Size / Pack" means anything at fulfillment time.
+          </p>
+        </div>
+      </li>
+      <li>
+        <span class="rank">05</span>
+        <div class="body">
+          <div class="title-row"><h3>API-level integration tests in CI</h3><span class="tag debt">Debt</span></div>
+          <p class="why">
+            Four rule fixtures cover scoring and routing, and there are standalone portal, negotiation
+            and invoicing scripts — but nothing runs them together on a push. The valuable suite is the
+            §9 walkthrough itself, driven end to end against a seeded database.
+          </p>
+        </div>
+      </li>
+      <li>
+        <span class="rank">06</span>
+        <div class="body">
+          <div class="title-row"><h3>Push the approval queue instead of polling</h3><span class="tag scale">Scale</span></div>
+          <p class="why">
+            Deal health and the approvals queue both refetch on an interval. With more than a handful
+            of concurrent reviewers that is the first thing to strain; the queue is a natural fit for
+            server-sent events keyed on approval-step changes.
+          </p>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <footer>
+    <span>Next 16 · React 19</span>
+    <span>Express 5 · Prisma 6 · PostgreSQL</span>
+    <span>Zod validation · JWT + portal tokens</span>
+    <span>SyntaxSquad</span>
+  </footer>
+
+</div>

@@ -32,6 +32,7 @@ import priceListRoutes from "./routes/priceList.routes.js";
 import governanceRoutes from "./routes/governance.routes.js";
 import approvalRoutes from "./routes/approval.routes.js";
 import auditRoutes from "./routes/audit.routes.js";
+import reportsRoutes from "./routes/reports.routes.js";
 
 // ── Track 3 · orders, fulfillment, subscription billing ─────────────────────
 import ordersRoutes from "./routes/orders.routes.js";
@@ -110,6 +111,7 @@ app.use("/api/price-lists", priceListRoutes);
 app.use("/api/governance", governanceRoutes);
 app.use("/api/approvals", approvalRoutes);
 app.use("/api/audit-logs", auditRoutes);
+app.use("/api/reports", reportsRoutes); // PDF §4-A7 reporting & dashboard
 
 app.use("/api/orders", ordersRoutes);
 app.use("/api/fulfillment", fulfillmentRoutes);

@@ -355,9 +355,7 @@ export function OdooControlPanel({
           <span>
             Showing <strong className="text-[#212529] font-bold">{filteredCount}</strong> of {totalCount} records
           </span>
-          <span className="px-1.5 py-0.2 rounded bg-[#E7F5EC] text-[#155724] font-mono text-[10px] font-semibold">
-            ⚡ B-Tree Indexed
-          </span>
+          
         </div>
       </div>
     </div>
