@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext.js";
-import { Button, Input, Card, Badge } from "../../components/ui/index.js";
+import { Button, Input, Card } from "../../components/ui/index.js";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -16,22 +16,6 @@ export default function LoginPage() {
   const [roleCode, setRoleCode] = useState("SALES_REP");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
-  // Quick Demo Accounts to facilitate fast review and role testing
-  const demoAccounts = [
-    { role: "SALES_REP", label: "Sales Rep", email: "rep@dealflow360.com", desc: "Builds quotes, applies discounts" },
-    { role: "SALES_MANAGER", label: "Sales Manager", email: "manager@dealflow360.com", desc: "Reviews tier & line overages" },
-    { role: "FINANCE", label: "Finance / Ops", email: "finance@dealflow360.com", desc: "Reviews deep discounts & billing" },
-    { role: "ADMIN", label: "Administrator", email: "admin@dealflow360.com", desc: "Configures ceilings & policies" },
-  ];
-
-  const handleSelectDemo = (acc) => {
-    setEmail(acc.email);
-    setPassword("Password123!");
-    setFullName(acc.label);
-    setRoleCode(acc.role);
-    setError("");
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -146,7 +130,7 @@ export default function LoginPage() {
           <Input
             label="Email Address"
             type="email"
-            placeholder="rep@dealflow360.com"
+            placeholder="name@company.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
@@ -175,38 +159,6 @@ export default function LoginPage() {
         <p className="text-[11px] text-[#6C757D] text-center mt-4">
           Are you a customer? <a href="/portal/login" className="text-[#714B67] font-medium underline">Sign in to the customer portal</a> — this page is for internal staff.
         </p>
-
-        {/* Demo Quick-Select Bar */}
-        <div className="mt-8 pt-5 border-t border-[#E9ECEF]">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-[#6C757D] uppercase tracking-wider">
-              Quick Role Testing
-            </span>
-            <Badge variant="neutral" size="sm">
-              Demo Preset
-            </Badge>
-          </div>
-          <p className="text-xs text-[#6C757D] mb-3">
-            Click any role to prefill credentials and test governance permissions:
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            {demoAccounts.map((acc) => (
-              <button
-                key={acc.role}
-                type="button"
-                onClick={() => handleSelectDemo(acc)}
-                className="text-left p-2.5 rounded-[6px] border border-[#DEE2E6] hover:border-[#714B67] hover:bg-[#F3EEF2]/50 transition-all cursor-pointer group"
-              >
-                <div className="font-semibold text-xs text-[#212529] group-hover:text-[#714B67]">
-                  {acc.label}
-                </div>
-                <div className="text-[11px] text-[#6C757D] truncate mt-0.5">
-                  {acc.email}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
       </Card>
     </div>
   );
