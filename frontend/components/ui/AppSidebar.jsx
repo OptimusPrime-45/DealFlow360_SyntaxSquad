@@ -148,6 +148,12 @@ export function AppSidebar({ className = "" }) {
           icon: "💳",
           roles: ["ADMIN", "SALES_REP", "SALES_MANAGER", "FINANCE"],
         },
+        {
+          label: "Reports & Analytics",
+          href: "/reports",
+          icon: "📈",
+          roles: ["ADMIN", "SALES_REP", "SALES_MANAGER", "FINANCE"],
+        },
       ],
     },
     {

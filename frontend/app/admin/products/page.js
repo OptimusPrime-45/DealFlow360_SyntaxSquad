@@ -308,7 +308,7 @@ export default function ProductsPage() {
         className="mb-3"
         searchTerm={searchTerm}
         onSearchChange={setSearchTerm}
-        placeholder="Search products by SKU, name, or category (B-Tree indexed)..."
+        placeholder="Search products by SKU, name, or category."
         filterGroups={filterGroups}
         activeFilters={activeFilters}
         onFilterChange={(key, val) => setActiveFilters((prev) => ({ ...prev, [key]: val }))}

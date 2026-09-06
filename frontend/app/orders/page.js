@@ -298,7 +298,7 @@ export default function OrdersListPage() {
         <OdooControlPanel
           searchTerm={searchTerm}
           onSearchChange={setSearchTerm}
-          placeholder="Search orders by order #, customer, or quotation # (B-Tree indexed)..."
+          placeholder="Search orders by order #, customer, or quotation #."
           filterGroups={filterGroups}
           activeFilters={activeFilters}
           onFilterChange={(key, val) => setActiveFilters((prev) => ({ ...prev, [key]: val }))}

@@ -155,7 +155,7 @@ export default function PlansPage() {
         className="mb-3"
         searchTerm={searchTerm}
         onSearchChange={setSearchTerm}
-        placeholder="Search plans by name, SKU, or duration (B-Tree indexed)..."
+        placeholder="Search plans by name, SKU, or duration."
         filterGroups={filterGroups}
         activeFilters={activeFilters}
         onFilterChange={(key, val) => setActiveFilters((prev) => ({ ...prev, [key]: val }))}

@@ -6,6 +6,8 @@ import {
   createQuotation,
   deleteQuotation,
   submitQuotation,
+  nudgeQuotation,
+  getQuotationNudges,
 } from "../controllers/quotation.controller.js";
 import {
   addQuotationLine,
@@ -38,6 +40,13 @@ router.get("/:id/suggestions", getUpsellSuggestions);
 router.post("/:id/lines", canBuildQuotes, addQuotationLine);
 router.patch("/:id/lines/:lineId", canBuildQuotes, updateQuotationLine);
 router.delete("/:id/lines/:lineId", canBuildQuotes, deleteQuotationLine);
+
+// PDF section 4-B9 - "An automated nudge or escalation action can be triggered
+// from an alert." Chasing a deal is a manager/oversight action, so a SALES_REP
+// cannot nudge themselves; Finance can escalate on billing-blocked deals.
+const canChaseDeals = requireRole("ADMIN", "SALES_MANAGER", "FINANCE");
+router.get("/:id/nudges", getQuotationNudges);
+router.post("/:id/nudge", canChaseDeals, nudgeQuotation);
 
 router.delete("/:id", canBuildQuotes, deleteQuotation);
 

@@ -745,7 +745,7 @@ export default function InvoicingDashboardPage() {
         <OdooControlPanel
           searchTerm={searchQuery}
           onSearchChange={setSearchQuery}
-          placeholder="Search invoices by invoice #, customer, order # (B-Tree indexed)..."
+          placeholder="Search invoices by invoice #, customer, order #."
           filterGroups={filterGroups}
           activeFilters={activeFilters}
           onFilterChange={(key, val) => setActiveFilters((prev) => ({ ...prev, [key]: val }))}

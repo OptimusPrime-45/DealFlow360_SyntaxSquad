@@ -402,7 +402,7 @@ export default function SubscriptionProductsPage() {
         className="mb-3"
         searchTerm={searchTerm}
         onSearchChange={setSearchTerm}
-        placeholder="Search SaaS products by SKU, name, or plan (B-Tree indexed)..."
+        placeholder="Search SaaS products by SKU, name, or plan."
         filterGroups={filterGroups}
         activeFilters={activeFilters}
         onFilterChange={(key, val) => setActiveFilters((prev) => ({ ...prev, [key]: val }))}

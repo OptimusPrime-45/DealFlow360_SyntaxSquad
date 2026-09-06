@@ -76,6 +76,12 @@ const DESTINATIONS = [
     roles: ["ADMIN", "SALES_REP", "SALES_MANAGER", "FINANCE"],
   },
   {
+    href: "/reports",
+    label: "Reports & Analytics",
+    blurb: "Sales performance by period, rep, approval status, and product, with PDF / XLS export.",
+    roles: ["ADMIN", "SALES_REP", "SALES_MANAGER", "FINANCE"],
+  },
+  {
     href: "/admin",
     label: "Backend Configuration",
     blurb: "Ceilings, approval ladder, catalogue, warehouses, plans.",

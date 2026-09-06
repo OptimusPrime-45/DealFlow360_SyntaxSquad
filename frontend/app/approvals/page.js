@@ -50,6 +50,9 @@ export default function ApprovalsPage() {
   const [healthLoading, setHealthLoading] = useState(false);
   const [daysThreshold, setDaysThreshold] = useState(7);
   const [signalFilter, setSignalFilter] = useState("ALL");
+  // Quotation id whose nudge is currently in flight, so only that row's button
+  // shows a pending state.
+  const [nudgingId, setNudgingId] = useState(null);
 
   // Search, Filter & Group By State (approvals queue)
   const [searchTerm, setSearchTerm] = useState("");
@@ -157,10 +160,39 @@ export default function ApprovalsPage() {
     }
   };
 
-  const nudgeRep = (quotation) => {
-    setNotice(
-      `Nudge alert dispatched to ${quotation.salesRep?.fullName || "the sales rep"} for deal ${quotation.quotationNumber}! Requested activity update within 24 hours.`
-    );
+  /**
+   * Records a real nudge/escalation against the deal (PDF section 4-B9).
+   *
+   * The backend writes it to the append-only audit ledger and deliberately does
+   * NOT touch lastActivityAt, so chasing a deal never clears its stalled signal.
+   * A 429 means someone already nudged inside the cooldown; we offer to re-send
+   * with force rather than silently pretending it worked.
+   */
+  const nudgeRep = async (quotation, { type = "NUDGE", force = false } = {}) => {
+    setNudgingId(quotation.id);
+    setError("");
+    setNotice("");
+    try {
+      const res = await apiClient.post(`/quotations/${quotation.id}/nudge`, { type, force });
+      setNotice(
+        res?.nudge?.message ||
+          `Follow-up recorded for ${quotation.quotationNumber}.`
+      );
+      await loadDealHealth(daysThreshold);
+    } catch (err) {
+      const alreadySent = err?.status === 429;
+      if (alreadySent && !force) {
+        if (confirm(`${err.message}\n\nSend it anyway?`)) {
+          await nudgeRep(quotation, { type, force: true });
+          return;
+        }
+        setNotice("Nudge cancelled - the deal was already chased recently.");
+      } else {
+        setError(err.message || "Failed to record the nudge");
+      }
+    } finally {
+      setNudgingId(null);
+    }
   };
 
   // Active approval cycle calculation
@@ -828,14 +860,31 @@ export default function ApprovalsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          className="text-[11px] py-1 px-2"
-                          onClick={() => nudgeRep(q)}
-                        >
-                          Nudge Rep
-                        </Button>
+                        <div className="flex flex-col gap-1">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="text-[11px] py-1 px-2"
+                            disabled={nudgingId === q.id}
+                            onClick={() => nudgeRep(q)}
+                          >
+                            {nudgingId === q.id ? "Sending..." : "Nudge Rep"}
+                          </Button>
+                          {q.nudges?.length > 0 && (
+                            <span
+                              className="text-[10px] text-[#6C757D]"
+                              title={q.nudges
+                                .map(
+                                  (n) =>
+                                    `${n.type} by ${n.sentBy} - ${new Date(n.sentAt).toLocaleString()}`
+                                )
+                                .join("\n")}
+                            >
+                              {q.nudges.length} follow-up{q.nudges.length === 1 ? "" : "s"} - last{" "}
+                              {new Date(q.nudges[0].sentAt).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
                         <Link href={`/quotations/${q.id}`}>
                           <Button variant="primary" size="sm" className="text-[11px] py-1 px-2.5">
                             Open Deal
@@ -988,6 +1037,38 @@ export default function ApprovalsPage() {
                             <span>{s.message}</span>
                           </div>
                         ))}
+
+                        {/* Discount vs. the rep's own historical baseline (PDF 4-B9).
+                            Shown whenever a baseline exists, so a healthy quote is
+                            visibly healthy rather than merely unflagged. */}
+                        {q.discountProfile?.baselineAverage !== null &&
+                          q.discountProfile?.baselineAverage !== undefined && (
+                            <div className="mt-1 flex items-center gap-1.5 text-[10px]">
+                              <span className="text-[#6C757D]">Discount</span>
+                              <span className="font-bold text-[#212529]">
+                                {pct(q.discountProfile.effectiveDiscountPercent)}
+                              </span>
+                              <span className="text-[#6C757D]">
+                                vs {q.discountProfile.baselineSource === "REP" ? "rep" : "team"} avg
+                              </span>
+                              <span className="font-semibold text-[#495057]">
+                                {pct(q.discountProfile.baselineAverage)}
+                              </span>
+                              <span
+                                className={`px-1.5 py-0.5 rounded-full font-bold ${
+                                  q.discountProfile.isAnomalous
+                                    ? "bg-[#DC3545]/10 text-[#DC3545]"
+                                    : "bg-[#28A745]/10 text-[#28A745]"
+                                }`}
+                                title={`Threshold: +${Number(
+                                  q.discountProfile.thresholdPoints ?? 0
+                                ).toFixed(1)} pts over a ${q.discountProfile.baselineSampleSize}-deal baseline`}
+                              >
+                                {Number(q.discountProfile.deviationPoints) >= 0 ? "+" : ""}
+                                {Number(q.discountProfile.deviationPoints ?? 0).toFixed(1)} pts
+                              </span>
+                            </div>
+                          )}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-xs font-bold text-[#212529]">
@@ -1026,4 +1107,3 @@ export default function ApprovalsPage() {
     </AppShell>
   );
 }
-

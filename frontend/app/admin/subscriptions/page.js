@@ -208,7 +208,7 @@ export default function SubscriptionsPage() {
         className="mb-3"
         searchTerm={searchTerm}
         onSearchChange={setSearchTerm}
-        placeholder="Search subscriptions by customer, order #, plan, or status (B-Tree indexed)..."
+        placeholder="Search subscriptions by customer, order #, plan, or status."
         filterGroups={filterGroups}
         activeFilters={activeFilters}
         onFilterChange={(key, val) => setActiveFilters((prev) => ({ ...prev, [key]: val }))}

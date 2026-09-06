@@ -12,6 +12,7 @@ import { calculateLineMath, round2, add, toNum } from "../lib/money.js";
 import { resolveCeiling } from "../rules/resolveCeiling.js";
 import { scoreQuotation } from "../rules/scoreQuotation.js";
 import { routeQuotationForApproval } from "../services/approvalRouting.service.js";
+import { recordAuditLog } from "../lib/audit.js";
 
 // Input validation schema
 const lineInputSchema = z.object({
@@ -104,6 +105,70 @@ export const getQuotations = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, { quotations }, "Quotations retrieved successfully"));
 });
 
+/// Statuses that count as "history": the deal is settled, so the discount on it
+/// is a finished decision and safe to use as a baseline. In-flight quotations are
+/// excluded so a rep cannot move their own baseline just by drafting more quotes.
+const SETTLED_STATUSES = ["CONFIRMED", "REJECTED", "CANCELLED", "EXPIRED"];
+
+/// Below this many settled quotations a rep has no meaningful personal baseline,
+/// and we fall back to the team's. Calling two quotes an "average" is how you
+/// generate false anomalies.
+const MIN_BASELINE_SAMPLE = 3;
+
+/**
+ * Effective, value-weighted discount on one quotation, in percentage points.
+ * subtotal is gross (pre-discount) and discountTotal is the money given away,
+ * so this is the share of list price discounted across the whole quote - the
+ * single number a rep's behaviour can be averaged over.
+ */
+function effectiveDiscountPercent(q) {
+  const gross = Number(q.subtotal ?? 0);
+  if (gross <= 0) return 0;
+  return (Number(q.discountTotal ?? 0) / gross) * 100;
+}
+
+/**
+ * Per-rep and team-wide historical discount baselines.
+ *
+ * PDF section 4-B9 defines a discount anomaly as "a discount well above a rep's
+ * historical average" - so the comparison has to be against that rep's own
+ * settled deals, not against a policy ceiling (the ceiling is already enforced
+ * by approval routing; re-reporting it here says nothing new).
+ */
+function buildDiscountBaselines(settledQuotations) {
+  const byRep = new Map();
+  const all = [];
+
+  for (const q of settledQuotations) {
+    const value = effectiveDiscountPercent(q);
+    all.push(value);
+    const bucket = byRep.get(q.salesRepId) || [];
+    bucket.push(value);
+    byRep.set(q.salesRepId, bucket);
+  }
+
+  const mean = (xs) => (xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+
+  const repBaselines = new Map();
+  for (const [repId, values] of byRep.entries()) {
+    repBaselines.set(repId, { average: mean(values), sampleSize: values.length });
+  }
+
+  return {
+    forRep(repId) {
+      const own = repBaselines.get(repId);
+      if (own && own.sampleSize >= MIN_BASELINE_SAMPLE) {
+        return { ...own, source: "REP" };
+      }
+      if (all.length >= MIN_BASELINE_SAMPLE) {
+        return { average: mean(all), sampleSize: all.length, source: "TEAM" };
+      }
+      // No defensible baseline yet - better to raise no signal than a fake one.
+      return null;
+    },
+  };
+}
+
 /**
  * Deal Health & At-Risk Quotations Dashboard
  * GET /api/quotations/deal-health
@@ -156,6 +221,23 @@ export const getDealHealth = asyncHandler(async (req, res) => {
     orderBy: { lastActivityAt: "asc" },
   });
 
+  // Historical baseline for DISCOUNT_ANOMALY. Scoped to the reps who actually
+  // appear in this view, so the query stays proportional to the dashboard.
+  const repIds = [...new Set(quotations.map((q) => q.salesRepId).filter(Boolean))];
+  const settledQuotations =
+    repIds.length > 0
+      ? await prisma.quotation.findMany({
+          where: { salesRepId: { in: repIds }, status: { in: SETTLED_STATUSES } },
+          select: { salesRepId: true, subtotal: true, discountTotal: true },
+        })
+      : [];
+  const baselines = buildDiscountBaselines(settledQuotations);
+  const anomalyDeviationPoints = Number(govSetting?.anomalyDeviationPoints ?? 5);
+
+  // Follow-up history, so the dashboard can show "already nudged 3h ago" rather
+  // than inviting a manager to chase the same rep twice.
+  const nudgeHistory = await loadNudgeHistory(quotations.map((q) => q.id));
+
   const evaluatedQuotations = quotations.map((q) => {
     const lastActivity = q.lastActivityAt ? new Date(q.lastActivityAt) : new Date(q.createdAt);
     const msInactive = now.getTime() - lastActivity.getTime();
@@ -163,6 +245,7 @@ export const getDealHealth = asyncHandler(async (req, res) => {
     const hoursInactive = Math.floor(msInactive / (60 * 60 * 1000));
 
     const signals = [];
+    let discountProfile = null;
 
     // 1. Stalled Deal Signal
     const isStalled = daysInactive >= stalledThresholdDays;
@@ -187,14 +270,55 @@ export const getDealHealth = asyncHandler(async (req, res) => {
       });
     }
 
-    // 3. Discount Anomaly Signal
+    // 3. Discount Anomaly Signal (PDF section 4-B9)
+    //
+    // Primary test: this quotation's effective discount measured against the
+    // rep's OWN historical average, with the gap configured by the Admin as
+    // GovernanceSetting.anomalyDeviationPoints.
+    //
+    // Secondary test: an outright ceiling breach still raises the signal. A rep
+    // who over-discounts on every single deal has a high personal baseline, so
+    // the deviation test alone would quietly clear their worst quotes.
     const worstOverage = Number(q.worstLineOverage ?? 0);
-    const score = Number(q.blendedScore ?? 0);
-    if (worstOverage >= 8.0 || score >= 4.0) {
+    const effectiveDiscount = effectiveDiscountPercent(q);
+    const baseline = baselines.forRep(q.salesRepId);
+    const deviation = baseline ? effectiveDiscount - baseline.average : null;
+    const deviatesFromHistory = deviation !== null && deviation >= anomalyDeviationPoints;
+    const breachesCeiling = worstOverage >= 8.0;
+
+    discountProfile = {
+      effectiveDiscountPercent: effectiveDiscount,
+      baselineAverage: baseline ? baseline.average : null,
+      baselineSource: baseline ? baseline.source : null,
+      baselineSampleSize: baseline ? baseline.sampleSize : 0,
+      deviationPoints: deviation,
+      thresholdPoints: anomalyDeviationPoints,
+      isAnomalous: deviatesFromHistory,
+    };
+
+    if (deviatesFromHistory || breachesCeiling) {
+      const repLabel = q.salesRep?.fullName || q.salesRep?.email || "this rep";
+      const severity =
+        (deviation !== null && deviation >= anomalyDeviationPoints * 2) || worstOverage >= 15.0
+          ? "CRITICAL"
+          : "HIGH";
+
+      const baselineLabel =
+        baseline && baseline.source === "REP"
+          ? `${repLabel}'s historical average`
+          : "the team's historical average";
+
+      const message = deviatesFromHistory
+        ? `Discount anomaly: ${effectiveDiscount.toFixed(1)}% is ${deviation.toFixed(1)} pts above ` +
+          `${baselineLabel} of ${baseline.average.toFixed(1)}% ` +
+          `(threshold +${anomalyDeviationPoints.toFixed(1)} pts, based on ${baseline.sampleSize} settled deals)`
+        : `Discount anomaly: line exceeds its policy ceiling by ${worstOverage.toFixed(1)} pts`;
+
       signals.push({
         signalType: "DISCOUNT_ANOMALY",
-        severity: worstOverage >= 15.0 ? "CRITICAL" : "HIGH",
-        message: `High discount deviation: line exceeds ceiling by ${worstOverage.toFixed(1)} pts`,
+        severity,
+        score: deviation !== null ? Number(deviation.toFixed(2)) : worstOverage,
+        message,
         detectedAt: now,
       });
     }
@@ -244,6 +368,8 @@ export const getDealHealth = asyncHandler(async (req, res) => {
       hoursInactive,
       isStalled,
       signals,
+      discountProfile,
+      nudges: nudgeHistory.get(q.id) || [],
       healthStatus,
     };
   });
@@ -685,4 +811,181 @@ export const submitQuotation = asyncHandler(async (req, res) => {
       message
     )
   );
+});
+
+
+// ============================================================================
+//  DEAL NUDGE & ESCALATION                                    (PDF section 4-B9)
+//  "An automated nudge or escalation action can be triggered from an alert."
+// ============================================================================
+
+/// A manager should not be able to spam the same rep about the same deal. Two
+/// nudges inside this window is noise, not follow-up, so the second is refused
+/// unless the caller explicitly overrides.
+const NUDGE_COOLDOWN_HOURS = 12;
+
+const NUDGE_ACTIONS = {
+  NUDGE: "DEAL_NUDGE_SENT",
+  ESCALATE: "DEAL_ESCALATED",
+};
+
+/**
+ * Recent nudge/escalation history for a set of quotations, newest first.
+ * Reads straight off the append-only audit ledger — the nudge IS the audit
+ * entry, so there is no second source of truth to drift.
+ */
+async function loadNudgeHistory(quotationIds) {
+  if (!quotationIds || quotationIds.length === 0) return new Map();
+
+  const logs = await prisma.auditLog.findMany({
+    where: {
+      quotationId: { in: quotationIds },
+      action: { in: Object.values(NUDGE_ACTIONS) },
+    },
+    include: { user: { select: { id: true, fullName: true, email: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const byQuotation = new Map();
+  for (const log of logs) {
+    const bucket = byQuotation.get(log.quotationId) || [];
+    bucket.push({
+      id: log.id,
+      action: log.action,
+      type: log.action === NUDGE_ACTIONS.ESCALATE ? "ESCALATE" : "NUDGE",
+      message: log.reason,
+      sentBy: log.user?.fullName || log.user?.email || "System",
+      sentAt: log.createdAt,
+      target: log.newValue?.targetRep ?? null,
+    });
+    byQuotation.set(log.quotationId, bucket);
+  }
+  return byQuotation;
+}
+
+/**
+ * POST /api/quotations/:id/nudge
+ * Body: { type?: "NUDGE" | "ESCALATE", message?: string, force?: boolean }
+ *
+ * Records a real, auditable follow-up against the deal.
+ *
+ * Deliberately does NOT touch lastActivityAt: a nudge is the manager acting,
+ * not the rep. Bumping it would clear the STALLED_DEAL signal and let a deal
+ * look healthy precisely because nobody worked it.
+ */
+export const nudgeQuotation = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { type = "NUDGE", message, force = false } = req.body || {};
+
+  const nudgeType = String(type).toUpperCase();
+  if (!NUDGE_ACTIONS[nudgeType]) {
+    throw new ApiError(400, 'type must be either "NUDGE" or "ESCALATE"');
+  }
+
+  const quotation = await prisma.quotation.findUnique({
+    where: { id },
+    include: {
+      salesRep: { select: { id: true, fullName: true, email: true } },
+      customer: { select: { id: true, name: true } },
+    },
+  });
+
+  if (!quotation) {
+    throw new ApiError(404, "Quotation not found");
+  }
+
+  // Nudging a settled deal is meaningless - there is nothing left to chase.
+  if (SETTLED_STATUSES.includes(quotation.status)) {
+    throw new ApiError(
+      400,
+      `Cannot nudge a ${quotation.status} quotation - the deal is already settled`
+    );
+  }
+
+  const existing = (await loadNudgeHistory([id])).get(id) || [];
+
+  if (!force && existing.length > 0) {
+    const lastSent = new Date(existing[0].sentAt);
+    const hoursSince = (Date.now() - lastSent.getTime()) / (60 * 60 * 1000);
+    if (hoursSince < NUDGE_COOLDOWN_HOURS) {
+      throw new ApiError(
+        429,
+        `${existing[0].sentBy} already nudged this deal ${Math.round(hoursSince)}h ago. ` +
+          `Wait ${Math.ceil(NUDGE_COOLDOWN_HOURS - hoursSince)}h or re-send with force.`
+      );
+    }
+  }
+
+  const lastActivity = quotation.lastActivityAt
+    ? new Date(quotation.lastActivityAt)
+    : new Date(quotation.createdAt);
+  const daysInactive = Math.floor((Date.now() - lastActivity.getTime()) / (24 * 60 * 60 * 1000));
+
+  const defaultMessage =
+    nudgeType === "ESCALATE"
+      ? `Escalated: ${quotation.quotationNumber} (${quotation.customer?.name || "customer"}) has had no activity for ${daysInactive} day(s).`
+      : `Follow-up requested on ${quotation.quotationNumber} (${quotation.customer?.name || "customer"}) - inactive for ${daysInactive} day(s).`;
+
+  const record = await recordAuditLog({
+    userId: req.user?.id || null,
+    quotationId: quotation.id,
+    actorType: "USER",
+    entityType: "Quotation",
+    entityId: quotation.id,
+    action: NUDGE_ACTIONS[nudgeType],
+    reason: (message && String(message).trim()) || defaultMessage,
+    newValue: {
+      targetRep: quotation.salesRep
+        ? {
+            id: quotation.salesRep.id,
+            name: quotation.salesRep.fullName,
+            email: quotation.salesRep.email,
+          }
+        : null,
+      quotationNumber: quotation.quotationNumber,
+      quotationStatus: quotation.status,
+      daysInactive,
+    },
+  });
+
+  if (!record) {
+    // recordAuditLog swallows its own errors and returns null. A nudge whose
+    // only effect is a toast is exactly the fake this endpoint replaces, so
+    // surface the failure instead of reporting success.
+    throw new ApiError(500, "Failed to record the nudge - nothing was sent");
+  }
+
+  const history = (await loadNudgeHistory([id])).get(id) || [];
+
+  return res.status(201).json(
+    new ApiResponse(
+      201,
+      {
+        nudge: {
+          id: record.id,
+          type: nudgeType,
+          message: record.reason,
+          sentAt: record.createdAt,
+          targetRep: quotation.salesRep,
+          daysInactive,
+        },
+        history,
+      },
+      nudgeType === "ESCALATE"
+        ? `Escalation recorded for ${quotation.quotationNumber}`
+        : `Nudge sent to ${quotation.salesRep?.fullName || "the sales rep"} for ${quotation.quotationNumber}`
+    )
+  );
+});
+
+/**
+ * GET /api/quotations/:id/nudges
+ * Follow-up history for one deal, newest first.
+ */
+export const getQuotationNudges = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const history = (await loadNudgeHistory([id])).get(id) || [];
+  return res
+    .status(200)
+    .json(new ApiResponse(200, { history }, "Nudge history retrieved"));
 });
