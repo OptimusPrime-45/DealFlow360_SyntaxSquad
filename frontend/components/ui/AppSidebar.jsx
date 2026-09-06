@@ -97,12 +97,6 @@ export function AppSidebar({ className = "" }) {
           icon: "📑",
           roles: ["ADMIN", "SALES_REP", "SALES_MANAGER", "FINANCE"],
         },
-        {
-          label: "New Quotation",
-          href: "/quotations/new",
-          icon: "➕",
-          roles: ["ADMIN", "SALES_REP", "SALES_MANAGER"],
-        },
       ],
     },
     {
