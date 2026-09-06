@@ -168,6 +168,27 @@ export default function InvoicingDashboardPage() {
   };
 
   // ==========================================================================
+  // ACTION: Cancel / Void Invoice (DRAFT or POSTED with zero payment)
+  // ==========================================================================
+  const handleCancelSingleInvoice = async (invoiceId, invoiceNumber) => {
+    const reason = prompt(`Enter reason for cancelling Invoice ${invoiceNumber}:`, 'Cancelled by administrator');
+    if (reason === null) return;
+    try {
+      setError(null);
+      await apiClient.post(`/invoices/${invoiceId}/cancel`, {
+        reason: reason.trim() || 'Cancelled by administrator',
+      });
+      setNotification({
+        type: 'success',
+        message: `Invoice ${invoiceNumber} successfully cancelled!`,
+      });
+      fetchInvoices();
+    } catch (err) {
+      setError(err.message || 'Failed to cancel invoice');
+    }
+  };
+
+  // ==========================================================================
   // ACTION: Open Payment Modal
   // ==========================================================================
   const openPaymentModal = (invoice) => {
@@ -357,6 +378,47 @@ export default function InvoicingDashboardPage() {
     ).length;
   }, [filteredInvoices, selectedIds]);
 
+  // Batch Cancel / Void Invoices (DRAFT or POSTED with zero payment)
+  const handleBatchCancelInvoices = async () => {
+    const selectedCancellable = filteredInvoices.filter(
+      (inv) =>
+        selectedIds.has(inv.id) &&
+        (inv.status === 'DRAFT' || (inv.status === 'POSTED' && Number(inv.amountPaid || 0) === 0))
+    );
+    if (selectedCancellable.length === 0) return;
+
+    const reason = prompt(
+      `Enter reason for cancelling/voiding ${selectedCancellable.length} invoice(s):`,
+      'Cancelled by billing administrator'
+    );
+    if (reason === null) return;
+
+    try {
+      setError(null);
+      for (const inv of selectedCancellable) {
+        await apiClient.post(`/invoices/${inv.id}/cancel`, {
+          reason: reason.trim() || 'Cancelled by billing administrator',
+        });
+      }
+      setNotification({
+        type: 'success',
+        message: `Successfully cancelled ${selectedCancellable.length} invoice(s).`,
+      });
+      setSelectedIds(new Set());
+      await fetchInvoices();
+    } catch (err) {
+      setError(err.message || 'Failed to cancel selected invoices');
+    }
+  };
+
+  const cancellableCount = useMemo(() => {
+    return filteredInvoices.filter(
+      (inv) =>
+        selectedIds.has(inv.id) &&
+        (inv.status === 'DRAFT' || (inv.status === 'POSTED' && Number(inv.amountPaid || 0) === 0))
+    ).length;
+  }, [filteredInvoices, selectedIds]);
+
   // Control Panel Options
   const filterGroups = [
     {
@@ -471,6 +533,15 @@ export default function InvoicingDashboardPage() {
           <span className="text-xs text-emerald-600 font-semibold px-2 py-1 bg-emerald-50 rounded border border-emerald-200">
             ✓ Settled
           </span>
+        )}
+        {(inv.status === 'DRAFT' || (inv.status === 'POSTED' && Number(inv.amountPaid || 0) === 0)) && (
+          <button
+            onClick={() => handleCancelSingleInvoice(inv.id, inv.invoiceNumber)}
+            className="inline-flex items-center px-2 py-1 text-xs font-medium text-red-600 hover:text-red-800 hover:bg-red-50 rounded transition border border-red-200"
+            title="Cancel invoice"
+          >
+            Cancel
+          </button>
         )}
         <button
           onClick={() => handleViewInvoiceDetail(inv.id)}
@@ -770,12 +841,6 @@ export default function InvoicingDashboardPage() {
           onSelectAll={() => setSelectedIds(new Set(filteredInvoices.map((inv) => inv.id)))}
           onClearSelection={() => setSelectedIds(new Set())}
           actions={[
-            {
-              label: 'Export Selected (CSV)',
-              icon: '📥',
-              onClick: handleExportSelected,
-              variant: 'secondary',
-            },
             ...(draftCount > 0
               ? [
                   {
@@ -786,6 +851,22 @@ export default function InvoicingDashboardPage() {
                   },
                 ]
               : []),
+            ...(cancellableCount > 0
+              ? [
+                  {
+                    label: `Cancel / Void (${cancellableCount})`,
+                    icon: '✕',
+                    onClick: handleBatchCancelInvoices,
+                    variant: 'danger',
+                  },
+                ]
+              : []),
+            {
+              label: 'Export Selected (CSV)',
+              icon: '📥',
+              onClick: handleExportSelected,
+              variant: 'secondary',
+            },
           ]}
         />
 

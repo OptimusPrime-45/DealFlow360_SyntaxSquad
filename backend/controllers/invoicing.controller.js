@@ -504,3 +504,48 @@ export const recordPayment = asyncHandler(async (req, res) => {
     )
   );
 });
+
+/**
+ * POST /api/invoices/:id/cancel
+ * Cancels/voids an unpaid invoice (DRAFT or POSTED with zero payment)
+ */
+export const cancelInvoice = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { reason = 'Cancelled by authorized user' } = req.body;
+
+  const invoice = await prisma.invoice.findUnique({ where: { id } });
+  if (!invoice) {
+    throw new ApiError(404, `Invoice with ID "${id}" not found`);
+  }
+
+  if (invoice.status === 'PAID' || invoice.status === 'PARTIALLY_PAID') {
+    throw new ApiError(400, 'Cannot cancel an invoice with recorded payments. Please issue a credit note.');
+  }
+
+  if (invoice.status === 'CANCELLED') {
+    throw new ApiError(400, 'Invoice is already cancelled.');
+  }
+
+  const updatedInvoice = await prisma.invoice.update({
+    where: { id },
+    data: {
+      status: 'CANCELLED',
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      userId: req.user?.id,
+      actorType: 'USER',
+      entityType: 'Invoice',
+      entityId: id,
+      action: 'INVOICE_CANCELLED',
+      newValue: { status: 'CANCELLED' },
+      reason,
+    },
+  });
+
+  return res.status(200).json(
+    new ApiResponse(200, { id: updatedInvoice.id, status: updatedInvoice.status }, 'Invoice successfully cancelled')
+  );
+});

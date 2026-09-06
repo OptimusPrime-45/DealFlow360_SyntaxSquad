@@ -379,6 +379,94 @@ export default function ApprovalsPage() {
     }
   };
 
+  // Batch Reject Action
+  const handleBatchReject = async () => {
+    const promptReason = prompt(
+      `Enter reason for rejecting ${visibleSelectedIds.size} selected quotation(s):`,
+      "Discount exceeds policy ceiling"
+    );
+    if (promptReason === null) return;
+    const finalReason = promptReason.trim() || "Discount exceeds policy ceiling";
+
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const targetIds = Array.from(visibleSelectedIds);
+      let successCount = 0;
+
+      for (const quoteId of targetIds) {
+        const full = await apiClient.get(`/quotations/${quoteId}`);
+        const q = full.quotation;
+        const cycles = q?.approvals || [];
+        const activeCycle = cycles.find((c) => c.status === "PENDING") || cycles[0];
+        const activeStep = activeCycle?.steps?.find((s) => s.status === "PENDING");
+
+        if (activeStep?.id) {
+          await apiClient.post(`/approvals/steps/${activeStep.id}/reject`, {
+            reason: finalReason,
+          });
+          successCount++;
+        }
+      }
+
+      setNotice(`Batch rejection complete: ${successCount} quotation(s) rejected.`);
+      setSelectedIds(new Set());
+      await loadQueue();
+      if (selected && targetIds.includes(selected.id)) {
+        await openQuotation(selected);
+      }
+    } catch (err) {
+      setError(err.message || "Failed during batch rejection");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Batch Return for Revision Action
+  const handleBatchReturn = async () => {
+    const promptReason = prompt(
+      `Enter instructions for returning ${visibleSelectedIds.size} selected quotation(s) for revision:`,
+      "Please revise discount to comply with policy"
+    );
+    if (promptReason === null) return;
+    const finalReason = promptReason.trim() || "Please revise discount to comply with policy";
+
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const targetIds = Array.from(visibleSelectedIds);
+      let successCount = 0;
+
+      for (const quoteId of targetIds) {
+        const full = await apiClient.get(`/quotations/${quoteId}`);
+        const q = full.quotation;
+        const cycles = q?.approvals || [];
+        const activeCycle = cycles.find((c) => c.status === "PENDING") || cycles[0];
+        const activeStep = activeCycle?.steps?.find((s) => s.status === "PENDING");
+
+        if (activeStep?.id) {
+          await apiClient.post(`/approvals/steps/${activeStep.id}/return`, {
+            reason: finalReason,
+          });
+          successCount++;
+        }
+      }
+
+      setNotice(`Batch return complete: ${successCount} quotation(s) returned to sales reps for revision.`);
+      setSelectedIds(new Set());
+      await loadQueue();
+      if (selected && targetIds.includes(selected.id)) {
+        await openQuotation(selected);
+      }
+    } catch (err) {
+      setError(err.message || "Failed during batch return");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Export Selected to CSV
   const handleExportSelected = () => {
     const selectedRows = filteredQuotations.filter((q) => visibleSelectedIds.has(q.id));
@@ -678,10 +766,22 @@ export default function ApprovalsPage() {
             onClearSelection={handleClearSelection}
             actions={[
               {
-                label: `Batch Approve Selected (${visibleSelectedIds.size})`,
+                label: `Approve Selected (${visibleSelectedIds.size})`,
                 icon: "✓",
                 onClick: handleBatchApprove,
                 variant: "primary",
+              },
+              {
+                label: `Reject Selected (${visibleSelectedIds.size})`,
+                icon: "✕",
+                onClick: handleBatchReject,
+                variant: "danger",
+              },
+              {
+                label: `Return for Revision (${visibleSelectedIds.size})`,
+                icon: "↩",
+                onClick: handleBatchReturn,
+                variant: "warning",
               },
               {
                 label: "Export Selected (CSV)",

@@ -24,6 +24,9 @@ router.get('/:id', invoicingController.getInvoiceById);
 // Post / finalize invoice for collection (DRAFT -> POSTED)
 router.post('/:id/post', canBill, invoicingController.postInvoice);
 
+// Cancel / void unpaid invoice
+router.post('/:id/cancel', canBill, invoicingController.cancelInvoice);
+
 // Record payment (supports partial payments and full payments)
 router.post('/:id/payments', canBill, invoicingController.recordPayment);
 

@@ -219,6 +219,116 @@ export default function QuotationsPage() {
     );
   };
 
+  // Filtered selections
+  const selectedRows = useMemo(
+    () => filteredQuotations.filter((q) => visibleSelectedIds.has(q.id)),
+    [filteredQuotations, visibleSelectedIds]
+  );
+  const selectedDrafts = useMemo(
+    () => selectedRows.filter((q) => q.status === "DRAFT"),
+    [selectedRows]
+  );
+  const selectedPending = useMemo(
+    () => selectedRows.filter((q) => q.status === "PENDING_APPROVAL"),
+    [selectedRows]
+  );
+  const selectedDeletables = useMemo(
+    () => selectedRows.filter((q) => ["DRAFT", "REJECTED", "CANCELLED"].includes(q.status)),
+    [selectedRows]
+  );
+
+  // Batch Submit Drafts
+  const handleBatchSubmit = async () => {
+    if (!confirm(`Submit ${selectedDrafts.length} draft quotation(s) for governance evaluation?`)) return;
+    setLoading(true);
+    setError("");
+    try {
+      for (const q of selectedDrafts) {
+        await apiClient.post(`/quotations/${q.id}/submit`);
+      }
+      setSelectedIds(new Set());
+      await fetchQuotations();
+    } catch (err) {
+      setError(err.message || "Failed during batch submit");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Batch Approve Pending (Manager / Admin)
+  const handleBatchApprove = async () => {
+    if (!confirm(`Approve ${selectedPending.length} pending quotation(s)?`)) return;
+    setLoading(true);
+    setError("");
+    try {
+      for (const q of selectedPending) {
+        const full = await apiClient.get(`/quotations/${q.id}`);
+        const cycles = full.quotation?.approvals || [];
+        const activeCycle = cycles.find((c) => c.status === "PENDING") || cycles[0];
+        const activeStep = activeCycle?.steps?.find((s) => s.status === "PENDING");
+        if (activeStep?.id) {
+          await apiClient.post(`/approvals/steps/${activeStep.id}/approve`, {
+            reason: "Batch approved from Quotations Pipeline",
+          });
+        }
+      }
+      setSelectedIds(new Set());
+      await fetchQuotations();
+    } catch (err) {
+      setError(err.message || "Failed during batch approval");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Batch Reject Pending (Manager / Admin)
+  const handleBatchReject = async () => {
+    const reason = prompt(
+      `Enter reason for rejecting ${selectedPending.length} pending quotation(s):`,
+      "Discount rejected in batch pipeline review"
+    );
+    if (reason === null) return;
+    setLoading(true);
+    setError("");
+    try {
+      for (const q of selectedPending) {
+        const full = await apiClient.get(`/quotations/${q.id}`);
+        const cycles = full.quotation?.approvals || [];
+        const activeCycle = cycles.find((c) => c.status === "PENDING") || cycles[0];
+        const activeStep = activeCycle?.steps?.find((s) => s.status === "PENDING");
+        if (activeStep?.id) {
+          await apiClient.post(`/approvals/steps/${activeStep.id}/reject`, {
+            reason: reason.trim() || "Discount rejected in batch pipeline review",
+          });
+        }
+      }
+      setSelectedIds(new Set());
+      await fetchQuotations();
+    } catch (err) {
+      setError(err.message || "Failed during batch rejection");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Batch Delete Quotes
+  const handleBatchDelete = async () => {
+    if (!confirm(`Delete ${selectedDeletables.length} selected quotation(s)? This action cannot be undone.`)) return;
+    setLoading(true);
+    setError("");
+    try {
+      for (const q of selectedDeletables) {
+        await apiClient.delete(`/quotations/${q.id}`);
+      }
+      setSelectedIds(new Set());
+      await fetchQuotations();
+    } catch (err) {
+      setError(err.message || "Failed during batch delete");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const statusColors = {
     DRAFT: "gray",
     PENDING_APPROVAL: "warning",
@@ -401,20 +511,55 @@ export default function QuotationsPage() {
         />
 
         {/* Batch Action Bar (Appears when 1+ checkboxes selected) */}
-        <BatchActionBar
-          selectedCount={visibleSelectedIds.size}
-          totalCount={filteredQuotations.length}
-          onSelectAll={handleSelectAllVisible}
-          onClearSelection={handleClearSelection}
-          actions={[
-            {
-              label: "Export Selected (CSV)",
-              icon: "📥",
-              onClick: handleExportSelected,
-              variant: "secondary",
-            },
-          ]}
-        />
+        {(() => {
+          const batchActions = [];
+          if (selectedDrafts.length > 0) {
+            batchActions.push({
+              label: `Submit Drafts (${selectedDrafts.length})`,
+              icon: "🚀",
+              onClick: handleBatchSubmit,
+              variant: "primary",
+            });
+          }
+          if (isManagerOrAdmin && selectedPending.length > 0) {
+            batchActions.push({
+              label: `Approve (${selectedPending.length})`,
+              icon: "✓",
+              onClick: handleBatchApprove,
+              variant: "primary",
+            });
+            batchActions.push({
+              label: `Reject (${selectedPending.length})`,
+              icon: "✕",
+              onClick: handleBatchReject,
+              variant: "danger",
+            });
+          }
+          if (selectedDeletables.length > 0) {
+            batchActions.push({
+              label: `Delete (${selectedDeletables.length})`,
+              icon: "🗑️",
+              onClick: handleBatchDelete,
+              variant: "danger",
+            });
+          }
+          batchActions.push({
+            label: "Export Selected (CSV)",
+            icon: "📥",
+            onClick: handleExportSelected,
+            variant: "secondary",
+          });
+
+          return (
+            <BatchActionBar
+              selectedCount={visibleSelectedIds.size}
+              totalCount={filteredQuotations.length}
+              onSelectAll={handleSelectAllVisible}
+              onClearSelection={handleClearSelection}
+              actions={batchActions}
+            />
+          );
+        })()}
 
         {error && (
           <div className="p-3 text-xs bg-[#DC3545]/10 border border-[#DC3545]/30 text-[#DC3545] rounded-[6px]">
