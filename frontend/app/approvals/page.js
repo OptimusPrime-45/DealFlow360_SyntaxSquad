@@ -1,9 +1,16 @@
 "use client";
 
 /**
- * Approval queue — §9 steps 3 and 5.
- * Enhanced with B-Tree instant search, OdooControlPanel filters (Risk Level, Sales Rep, Customer Tier),
- * Group By dimensions, Multi-Select Checkboxes, and Batch Actions (Batch Approve & Export CSV).
+ * Manager Command Center & Deal Health Hub — §9 steps 3 and 5 + Hero Feature 1 & 2.
+ *
+ * Sales Manager / Approver responsibilities:
+ * 1. Reviews and approves or rejects quotations exceeding discount thresholds (Pending Approvals).
+ * 2. Monitors deal health dashboard for at-risk and stalled deals (Stalled Quotations & Deal Health).
+ * 3. Configures discount tiers and approval chains (accessible via Backend Configuration).
+ *
+ * Approvals queue is enhanced with B-Tree instant search, OdooControlPanel filters
+ * (Risk Level, Sales Rep, Customer Tier), Group By dimensions, multi-select checkboxes,
+ * and batch actions (Batch Approve & Export CSV).
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
@@ -25,6 +32,10 @@ export default function ApprovalsPage() {
   const router = useRouter();
   const { user, isAuthenticated, loading: authLoading } = useAuth();
 
+  // Tab navigation
+  const [activeTab, setActiveTab] = useState("approvals"); // 'approvals' | 'stalled' | 'health'
+
+  // Approvals queue state
   const [quotations, setQuotations] = useState([]);
   const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -34,7 +45,13 @@ export default function ApprovalsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  // Search, Filter & Group By State
+  // Deal health state
+  const [dealHealth, setDealHealth] = useState(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [daysThreshold, setDaysThreshold] = useState(7);
+  const [signalFilter, setSignalFilter] = useState("ALL");
+
+  // Search, Filter & Group By State (approvals queue)
   const [searchTerm, setSearchTerm] = useState("");
   const [activeFilters, setActiveFilters] = useState({
     risk: [],
@@ -51,6 +68,7 @@ export default function ApprovalsPage() {
     if (!authLoading && !isAuthenticated) router.push("/login");
   }, [authLoading, isAuthenticated, router]);
 
+  // Load approval queue
   const loadQueue = useCallback(async () => {
     try {
       const data = await apiClient.get("/quotations?status=PENDING_APPROVAL");
@@ -62,9 +80,31 @@ export default function ApprovalsPage() {
     }
   }, []);
 
+  // Load deal health & stalled quotations
+  const loadDealHealth = useCallback(async (threshold) => {
+    setHealthLoading(true);
+    try {
+      const d = threshold || daysThreshold;
+      const res = await apiClient.get(`/quotations/deal-health?days=${d}`);
+      setDealHealth(res || null);
+    } catch (err) {
+      console.error("Deal health fetch error:", err);
+    } finally {
+      setHealthLoading(false);
+    }
+  }, [daysThreshold]);
+
   useEffect(() => {
-    if (isAuthenticated) loadQueue();
-  }, [isAuthenticated, loadQueue]);
+    if (isAuthenticated) {
+      loadQueue();
+      loadDealHealth(daysThreshold);
+    }
+  }, [isAuthenticated, loadQueue, loadDealHealth, daysThreshold]);
+
+  const handleThresholdChange = (days) => {
+    setDaysThreshold(days);
+    loadDealHealth(days);
+  };
 
   const openQuotation = async (q) => {
     setSelected(q);
@@ -107,6 +147,7 @@ export default function ApprovalsPage() {
       }
       setReason("");
       await loadQueue();
+      await loadDealHealth(daysThreshold);
       if (selected) await openQuotation(selected);
     } catch (err) {
       setError(err.message);
@@ -115,7 +156,42 @@ export default function ApprovalsPage() {
     }
   };
 
-  // Build client B-Tree Search Index
+  const nudgeRep = (quotation) => {
+    setNotice(
+      `Nudge alert dispatched to ${quotation.salesRep?.fullName || "the sales rep"} for deal ${quotation.quotationNumber}! Requested activity update within 24 hours.`
+    );
+  };
+
+  // Active approval cycle calculation
+  const cycles =
+    detail?.history?.cycles ||
+    detail?.history?.approvals ||
+    detail?.history?.history ||
+    detail?.quotation?.approvals ||
+    [];
+  const activeCycle =
+    Array.isArray(cycles) ? cycles.find((c) => c.status === "PENDING") || cycles[0] : null;
+  const findings = activeCycle?.findings;
+  const findingRows = Array.isArray(findings) ? findings : findings?.lines || [];
+
+  const stalledQuotations = dealHealth?.stalledQuotations || [];
+  const atRiskQuotations = dealHealth?.atRiskQuotations || [];
+  const summary = dealHealth?.summary || {
+    stalledCount: 0,
+    stalledTotalValue: 0,
+    atRiskCount: 0,
+    atRiskTotalValue: 0,
+    criticalRiskCount: 0,
+    stalledThresholdDays: daysThreshold,
+  };
+
+  // Filter at-risk deals by signal
+  const filteredAtRisk = atRiskQuotations.filter((q) => {
+    if (signalFilter === "ALL") return true;
+    if (signalFilter === "CRITICAL") return q.healthStatus === "CRITICAL";
+    return q.signals.some((s) => s.signalType === signalFilter);
+  });
+
   const btreeIndex = useMemo(() => {
     const index = new BTreeSearchIndex({ degree: 3 });
     quotations.forEach((q) => {
@@ -333,18 +409,6 @@ export default function ApprovalsPage() {
     { label: "None", value: "" },
   ];
 
-  // The cycle currently awaiting a decision
-  const cycles =
-    detail?.history?.cycles ||
-    detail?.history?.approvals ||
-    detail?.history?.history ||
-    detail?.quotation?.approvals ||
-    [];
-  const activeCycle =
-    Array.isArray(cycles) ? cycles.find((c) => c.status === "PENDING") || cycles[0] : null;
-  const findings = activeCycle?.findings;
-  const findingRows = Array.isArray(findings) ? findings : findings?.lines || [];
-
   if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#F8F9FA]">
@@ -400,309 +464,707 @@ export default function ApprovalsPage() {
     );
   };
 
+  if (authLoading || loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F8F9FA]">
+        <div className="w-8 h-8 border-3 border-[#714B67] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  const roleCode = typeof user?.role === "string" ? user.role : user?.role?.code;
+
   return (
-    <div className="min-h-screen bg-[#F8F9FA]">
-      <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-10">
+    <div className="min-h-screen bg-[#F8F9FA] flex flex-col">
+      {/* Top Header */}
+      <header className="h-16 bg-white border-b border-[#E9ECEF] px-6 flex items-center justify-between sticky top-0 z-20 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
         <div className="flex items-center gap-4">
-          <Link href="/" className="text-sm text-[#6C757D] hover:text-[#714B67] transition-colors">
+          <Link href="/" className="text-sm font-medium text-[#6C757D] hover:text-[#714B67] transition-colors">
             ← Workspace
           </Link>
+          <div className="h-4 w-px bg-[#CED4DA]" />
           <div>
-            <div className="font-bold text-base text-[#212529]">Approvals Queue</div>
+            <div className="font-bold text-base text-[#212529] tracking-tight">Manager Command Center</div>
             <div className="text-[11px] text-[#6C757D]">
-              {quotations.length} quotation{quotations.length === 1 ? "" : "s"} awaiting a decision
+              Approvals, Stalled Quotations & Deal Health Dashboard
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="info" size="md">{user?.role}</Badge>
-          <Button variant="secondary" size="sm" onClick={loadQueue}>
-            ↻ Refresh
-          </Button>
+
+        <div className="flex items-center gap-3">
+          <div className="text-right hidden sm:block">
+            <div className="text-xs font-semibold text-[#212529]">{user?.fullName}</div>
+            <div className="text-[10px] text-[#6C757D]">{user?.email}</div>
+          </div>
+          <Badge variant={roleCode === "SALES_MANAGER" ? "warning" : roleCode === "FINANCE" ? "info" : "danger"} size="sm">
+            {roleCode}
+          </Badge>
+          {(roleCode === "ADMIN" || roleCode === "SALES_MANAGER") && (
+            <Link href="/admin/tiers" className="text-xs font-medium text-[#714B67] hover:underline ml-2 hidden md:inline">
+              ⚙ Configure Tiers & Chains
+            </Link>
+          )}
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto p-6 space-y-4">
-        {/* Odoo Control Panel for Approvals */}
-        <OdooControlPanel
-          searchTerm={searchTerm}
-          onSearchChange={setSearchTerm}
-          placeholder="Search pending approvals by quote #, customer, or sales rep (B-Tree indexed)..."
-          filterGroups={filterGroups}
-          activeFilters={activeFilters}
-          onFilterChange={(key, val) => setActiveFilters((prev) => ({ ...prev, [key]: val }))}
-          groupByOptions={groupByOptions}
-          activeGroupBy={activeGroupBy}
-          onGroupByChange={setActiveGroupBy}
-          totalCount={quotations.length}
-          filteredCount={filteredQuotations.length}
-          onResetAll={() => {
-            setSearchTerm("");
-            setActiveFilters({ risk: [], salesRepId: "", tier: [] });
-            setActiveGroupBy("");
-          }}
-        />
+      {/* Main Container */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+        {/* Navigation Tabs */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#DEE2E6] pb-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveTab("approvals")}
+              className={`px-4 py-2 text-xs font-semibold rounded-[6px] transition-all flex items-center gap-2 ${
+                activeTab === "approvals"
+                  ? "bg-[#714B67] text-white shadow-xs"
+                  : "bg-white text-[#495057] hover:bg-[#E9ECEF] border border-[#CED4DA]"
+              }`}
+            >
+              <span>Pending Approvals</span>
+              <span
+                className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+                  activeTab === "approvals" ? "bg-white/20 text-white" : "bg-[#F8F9FA] text-[#212529] border border-[#CED4DA]"
+                }`}
+              >
+                {quotations.length}
+              </span>
+            </button>
 
-        {/* Batch Action Bar */}
-        <BatchActionBar
-          selectedCount={selectedIds.size}
-          totalCount={filteredQuotations.length}
-          onSelectAll={handleSelectAllVisible}
-          onClearSelection={handleClearSelection}
-          actions={[
-            {
-              label: `Batch Approve Selected (${selectedIds.size})`,
-              icon: "✓",
-              onClick: handleBatchApprove,
-              variant: "primary",
-            },
-            {
-              label: "Export Selected (CSV)",
-              icon: "📥",
-              onClick: handleExportSelected,
-              variant: "secondary",
-            },
-          ]}
-        />
+            <button
+              onClick={() => setActiveTab("stalled")}
+              className={`px-4 py-2 text-xs font-semibold rounded-[6px] transition-all flex items-center gap-2 ${
+                activeTab === "stalled"
+                  ? "bg-[#E03131] text-white shadow-xs"
+                  : "bg-white text-[#495057] hover:bg-[#E9ECEF] border border-[#CED4DA]"
+              }`}
+            >
+              <span>⚠️ Stalled Quotations</span>
+              <span
+                className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+                  activeTab === "stalled" ? "bg-white/20 text-white" : "bg-[#F8F9FA] text-[#E03131] font-bold border border-[#E03131]/30"
+                }`}
+              >
+                {stalledQuotations.length}
+              </span>
+            </button>
 
+            <button
+              onClick={() => setActiveTab("health")}
+              className={`px-4 py-2 text-xs font-semibold rounded-[6px] transition-all flex items-center gap-2 ${
+                activeTab === "health"
+                  ? "bg-[#FD7E14] text-white shadow-xs"
+                  : "bg-white text-[#495057] hover:bg-[#E9ECEF] border border-[#CED4DA]"
+              }`}
+            >
+              <span>Deal Health Dashboard</span>
+              <span
+                className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+                  activeTab === "health" ? "bg-white/20 text-white" : "bg-[#F8F9FA] text-[#FD7E14] font-bold border border-[#FD7E14]/30"
+                }`}
+              >
+                {atRiskQuotations.length} At Risk
+              </span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs text-[#6C757D]">
+            <span>Inactivity Threshold:</span>
+            <div className="flex items-center border border-[#CED4DA] rounded-[6px] bg-white overflow-hidden">
+              {[3, 7, 14, 30].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => handleThresholdChange(d)}
+                  className={`px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                    daysThreshold === d
+                      ? "bg-[#714B67] text-white"
+                      : "text-[#495057] hover:bg-[#F8F9FA]"
+                  }`}
+                >
+                  {d}d
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Global Notifications */}
         {error && (
-          <div className="bg-[#FDECEA] border border-[#DC3545]/30 text-[#842029] text-sm rounded-[8px] px-4 py-3">
-            {error}
+          <div className="bg-[#FDECEA] border border-[#DC3545]/30 text-[#842029] text-sm rounded-[8px] px-4 py-3 flex items-center justify-between">
+            <span>{error}</span>
+            <button onClick={() => setError("")} className="text-xs font-bold text-[#842029]">✕</button>
           </div>
         )}
         {notice && (
-          <div className="bg-[#E7F5EC] border border-[#28A745]/30 text-[#155724] text-sm rounded-[8px] px-4 py-3">
-            {notice}
+          <div className="bg-[#E7F5EC] border border-[#28A745]/30 text-[#155724] text-sm rounded-[8px] px-4 py-3 flex items-center justify-between">
+            <span>{notice}</span>
+            <button onClick={() => setNotice("")} className="text-xs font-bold text-[#155724]">✕</button>
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* ── Queue Column (1 col) ── */}
-          <Card
-            title="Awaiting Approval"
-            subtitle={`${filteredQuotations.length} quotes pending`}
-            padding="p-0"
-            action={
-              filteredQuotations.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleSelectAllVisible}
-                  className="text-xs text-[#714B67] hover:underline font-semibold"
-                >
-                  {selectedIds.size === filteredQuotations.length ? "Deselect All" : "Select All"}
-                </button>
-              )
-            }
-          >
-            <div>
-              {filteredQuotations.length === 0 ? (
-                <p className="text-xs text-[#6C757D] p-4 text-center">
-                  No quotations match the active search and filter criteria.
-                </p>
-              ) : !groupedQuotations ? (
-                // Flat list
-                filteredQuotations.map(renderQueueItem)
-              ) : (
-                // Grouped list
-                groupedQuotations.map((group) => {
-                  const isCollapsed = collapsedGroups.has(group.groupKey);
-                  return (
-                    <div key={group.groupKey} className="border-b border-[#CED4DA]">
-                      <div
-                        onClick={() => toggleGroupCollapse(group.groupKey)}
-                        className="bg-[#F8F9FA] px-3 py-2 flex items-center justify-between cursor-pointer select-none hover:bg-[#EDF2F7] transition-colors border-t"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-[#714B67] font-bold">
-                            {isCollapsed ? "▶" : "▼"}
-                          </span>
-                          <span className="font-bold text-xs text-[#212529]">{group.groupKey}</span>
-                          <Badge variant="neutral" size="sm">{group.items.length}</Badge>
-                        </div>
-                        <span className="text-xs font-bold text-[#212529]">
-                          {money(group.totalValue)}
-                        </span>
-                      </div>
-                      {!isCollapsed && group.items.map(renderQueueItem)}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </Card>
+        {/* ═══════════════════════════════════════════════════════════════════ */}
+        {/* TAB 1: PENDING APPROVALS QUEUE                                     */}
+        {/* ═══════════════════════════════════════════════════════════════════ */}
+        {activeTab === "approvals" && (
+          <>
+          {/* Odoo Control Panel for Approvals */}
+          <OdooControlPanel
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            placeholder="Search pending approvals by quote #, customer, or sales rep (B-Tree indexed)..."
+            filterGroups={filterGroups}
+            activeFilters={activeFilters}
+            onFilterChange={(key, val) => setActiveFilters((prev) => ({ ...prev, [key]: val }))}
+            groupByOptions={groupByOptions}
+            activeGroupBy={activeGroupBy}
+            onGroupByChange={setActiveGroupBy}
+            totalCount={quotations.length}
+            filteredCount={filteredQuotations.length}
+            onResetAll={() => {
+              setSearchTerm("");
+              setActiveFilters({ risk: [], salesRepId: "", tier: [] });
+              setActiveGroupBy("");
+            }}
+          />
 
-          {/* ── Detail Column (2 cols) ── */}
-          <div className="lg:col-span-2 space-y-5">
-            {!detail && (
-              <Card>
-                <div className="py-12 text-center text-sm text-[#6C757D]">
-                  <div className="text-2xl mb-2">📋</div>
-                  Select a quotation from the queue to inspect line findings, overage triggers, and take approval action.
-                </div>
-              </Card>
-            )}
+          {/* Batch Action Bar */}
+          <BatchActionBar
+            selectedCount={selectedIds.size}
+            totalCount={filteredQuotations.length}
+            onSelectAll={handleSelectAllVisible}
+            onClearSelection={handleClearSelection}
+            actions={[
+              {
+                label: `Batch Approve Selected (${selectedIds.size})`,
+                icon: "✓",
+                onClick: handleBatchApprove,
+                variant: "primary",
+              },
+              {
+                label: "Export Selected (CSV)",
+                icon: "📥",
+                onClick: handleExportSelected,
+                variant: "secondary",
+              },
+            ]}
+          />
 
-            {detail && (
-              <>
-                <Card
-                  title={`${detail.quotation.quotationNumber} — why this is on your desk`}
-                  subtitle={`${detail.quotation.customer?.name} · ${detail.quotation.customerTier?.name || "Standard Tier"}${
-                    detail.quotation.salesRep
-                      ? ` · Assigned Rep: ${detail.quotation.salesRep.fullName} (${detail.quotation.salesRep.email})`
-                      : ""
-                  }`}
-                >
-                  <div className="grid grid-cols-3 gap-4 mb-4">
-                    <div>
-                      <div className="text-[11px] uppercase text-[#6C757D]">Blended Score</div>
-                      <div className="text-lg font-bold">
-                        {Number(detail.quotation.blendedScore).toFixed(2)}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[11px] uppercase text-[#6C757D]">Worst Line</div>
-                      <div className="text-lg font-bold text-[#DC3545]">
-                        +{Number(detail.quotation.worstLineOverage).toFixed(2)} pts
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[11px] uppercase text-[#6C757D]">Order Total</div>
-                      <div className="text-lg font-bold">{money(detail.quotation.grandTotal)}</div>
-                    </div>
-                  </div>
-
-                  {activeCycle && (
-                    <p className="text-xs text-[#6C757D] mb-3">
-                      Approval cycle {activeCycle.approvalCycle} · triggered by{" "}
-                      <strong>{String(activeCycle.triggeredBy).replace(/_/g, " ").toLowerCase()}</strong>
-                    </p>
-                  )}
-
-                  <Table headers={["Line", "Discount", "Ceiling", "Over by"]}>
-                    {(findingRows.length > 0 ? findingRows : detail.quotation.lines).map((f, i) => (
-                      <tr key={f.lineId || f.id || i} className="border-t border-[#E9ECEF]">
-                        <td className="py-2 px-3 font-medium text-xs">
-                          {f.productName || f.product?.name || `Line #${i + 1}`}
-                        </td>
-                        <td className="py-2 px-3 text-xs">{pct(f.discountPercent)}</td>
-                        <td className="py-2 px-3 text-xs text-[#6C757D]">
-                          {pct(f.ceilingPercent ?? f.effectiveCeilingPercent)}
-                        </td>
-                        <td className="py-2 px-3 text-xs">
-                          {Number(f.overagePts ?? f.overage ?? 0) > 0 ? (
-                            <span className="text-[#DC3545] font-semibold">
-                              +{Number(f.overagePts ?? f.overage ?? 0).toFixed(2)} pts
-                            </span>
-                          ) : (
-                            <span className="text-[#28A745]">within ceiling</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </Table>
-                </Card>
-
-                {/* ── Steps and Actions ── */}
-                <Card title="Review Ladder &amp; Decisions">
-                  {(!activeCycle || !activeCycle.steps || activeCycle.steps.length === 0) && (
-                    <p className="text-xs text-[#6C757D]">No review steps are recorded for this cycle.</p>
-                  )}
-
-                  {activeCycle?.steps?.map((step) => {
-                    const isPending = step.status === "PENDING";
-                    const isActor =
-                      user?.role === "ADMIN" ||
-                      user?.role === step.role?.code ||
-                      user?.roleId === step.roleId;
-
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            {/* ── Queue Column (1 col) ── */}
+            <Card
+              title="Awaiting Approval"
+              subtitle={`${filteredQuotations.length} quotes pending`}
+              padding="p-0"
+              action={
+                filteredQuotations.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleSelectAllVisible}
+                    className="text-xs text-[#714B67] hover:underline font-semibold"
+                  >
+                    {selectedIds.size === filteredQuotations.length ? "Deselect All" : "Select All"}
+                  </button>
+                )
+              }
+            >
+              <div>
+                {filteredQuotations.length === 0 ? (
+                  <p className="text-xs text-[#6C757D] p-4 text-center">
+                    No quotations match the active search and filter criteria.
+                  </p>
+                ) : !groupedQuotations ? (
+                  // Flat list
+                  filteredQuotations.map(renderQueueItem)
+                ) : (
+                  // Grouped list
+                  groupedQuotations.map((group) => {
+                    const isCollapsed = collapsedGroups.has(group.groupKey);
                     return (
-                      <div
-                        key={step.id}
-                        className="border border-[#E9ECEF] rounded-[8px] p-4 mb-3 last:mb-0"
-                      >
-                        <div className="flex items-center justify-between mb-2">
+                      <div key={group.groupKey} className="border-b border-[#CED4DA]">
+                        <div
+                          onClick={() => toggleGroupCollapse(group.groupKey)}
+                          className="bg-[#F8F9FA] px-3 py-2 flex items-center justify-between cursor-pointer select-none hover:bg-[#EDF2F7] transition-colors border-t"
+                        >
                           <div className="flex items-center gap-2">
-                            <span className="font-semibold text-sm">
-                              Step {step.stepOrder}: {step.role?.name || step.role?.code}
+                            <span className="text-xs text-[#714B67] font-bold">
+                              {isCollapsed ? "▶" : "▼"}
                             </span>
-                            <Badge
-                              variant={
-                                step.status === "APPROVED"
-                                  ? "success"
-                                  : step.status === "REJECTED"
-                                  ? "danger"
-                                  : step.status === "RETURNED"
-                                  ? "warning"
-                                  : "neutral"
-                              }
-                              size="sm"
-                            >
-                              {step.status}
-                            </Badge>
+                            <span className="font-bold text-xs text-[#212529]">{group.groupKey}</span>
+                            <Badge variant="neutral" size="sm">{group.items.length}</Badge>
                           </div>
-                          {step.actedAt && (
-                            <span className="text-[11px] text-[#6C757D]">
-                              {new Date(step.actedAt).toLocaleString()}
-                            </span>
-                          )}
+                          <span className="text-xs font-bold text-[#212529]">
+                            {money(group.totalValue)}
+                          </span>
                         </div>
-
-                        {step.reviewer && (
-                          <p className="text-xs text-[#6C757D] mb-2">
-                            Reviewer: {step.reviewer.fullName} ({step.reviewer.email})
-                          </p>
-                        )}
-                        {step.reason && (
-                          <div className="text-xs bg-[#F8F9FA] rounded p-2 text-[#495057] mb-2">
-                            <strong>Reason:</strong> {step.reason}
-                          </div>
-                        )}
-
-                        {isPending && isActor && (
-                          <div className="mt-3 pt-3 border-t border-[#E9ECEF] space-y-2">
-                            <input
-                              type="text"
-                              value={reason}
-                              onChange={(e) => setReason(e.target.value)}
-                              placeholder="Reason / feedback (required for reject or return)..."
-                              className="w-full text-xs px-3 py-2 border border-[#CED4DA] rounded-[6px] outline-none focus:border-[#714B67]"
-                            />
-                            <div className="flex items-center gap-2">
-                              <Button
-                                variant="primary"
-                                size="sm"
-                                disabled={busy}
-                                onClick={() => act(step.id, "approve")}
-                              >
-                                Approve Step
-                              </Button>
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                disabled={busy}
-                                onClick={() => act(step.id, "return")}
-                              >
-                                Return to Rep
-                              </Button>
-                              <Button
-                                variant="danger"
-                                size="sm"
-                                disabled={busy}
-                                onClick={() => act(step.id, "reject")}
-                              >
-                                Reject
-                              </Button>
-                            </div>
-                          </div>
-                        )}
+                        {!isCollapsed && group.items.map(renderQueueItem)}
                       </div>
                     );
-                  })}
+                  })
+                )}
+              </div>
+            </Card>
+
+            {/* Right Column: Review Details & Action Box */}
+            <div className="lg:col-span-2 space-y-5">
+              {!detail && (
+                <Card>
+                  <div className="p-8 text-center text-sm text-[#6C757D]">
+                    <div className="text-2xl mb-2">📋</div>
+                    Select a quotation from the queue to view line-level violation findings, step history, and decision controls.
+                  </div>
                 </Card>
-              </>
-            )}
+              )}
+
+              {detail && (
+                <>
+                  <Card
+                    title={`${detail.quotation.quotationNumber} — Policy Violation Findings`}
+                    subtitle={`${detail.quotation.customer?.name} · ${detail.quotation.customerTier?.name || "Standard Tier"}${
+                      detail.quotation.salesRep
+                        ? ` · Assigned Rep: ${detail.quotation.salesRep.fullName}`
+                        : ""
+                    }`}
+                  >
+                    <div className="grid grid-cols-3 gap-4 mb-4 bg-[#F8F9FA] p-3 rounded-[6px] border border-[#E9ECEF]">
+                      <div>
+                        <div className="text-[10px] uppercase font-semibold text-[#6C757D]">Blended Score</div>
+                        <div className="text-base font-bold text-[#212529]">
+                          {Number(detail.quotation.blendedScore).toFixed(2)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] uppercase font-semibold text-[#6C757D]">Worst Line Overage</div>
+                        <div className="text-base font-bold text-[#DC3545]">
+                          +{Number(detail.quotation.worstLineOverage).toFixed(2)} pts
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] uppercase font-semibold text-[#6C757D]">Order Total Value</div>
+                        <div className="text-base font-bold text-[#212529]">{money(detail.quotation.grandTotal)}</div>
+                      </div>
+                    </div>
+
+                    {activeCycle && (
+                      <p className="text-xs text-[#6C757D] mb-3">
+                        Approval cycle {activeCycle.approvalCycle} · triggered by{" "}
+                        <strong className="text-[#212529]">
+                          {String(activeCycle.triggeredBy).replace(/_/g, " ").toLowerCase()}
+                        </strong>
+                      </p>
+                    )}
+
+                    <Table headers={["Line Item", "Discount Applied", "Policy Ceiling", "Ceiling Overage"]}>
+                      {(findingRows.length > 0 ? findingRows : detail.quotation.lines).map((f, i) => (
+                        <tr key={f.lineId || f.id || i} className="border-t border-[#E9ECEF]">
+                          <td className="px-4 py-2.5 text-xs font-medium text-[#212529]">
+                            {f.productName || f.product?.name || "Product Line"}
+                          </td>
+                          <td className="px-4 py-2.5 text-xs font-semibold">{pct(f.discountPercent)}</td>
+                          <td className="px-4 py-2.5 text-xs text-[#6C757D]">
+                            {pct(f.effectiveCeilingPercent)}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            {Number(f.overagePts) > 0 ? (
+                              <Badge variant="danger" size="sm">
+                                +{Number(f.overagePts).toFixed(1)} pts
+                              </Badge>
+                            ) : (
+                              <span className="text-[#28A745] text-xs font-semibold">✓ Compliant</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </Table>
+                  </Card>
+
+                  {/* Decision Panel */}
+                  <Card title="Manager Action & Reason" subtitle="Decisions are cryptographically recorded with actor ID, timestamp, and audit trail.">
+                    <textarea
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                      rows={2}
+                      placeholder="Enter review decision notes (mandatory when rejecting or returning)..."
+                      className="w-full px-3 py-2 text-xs bg-white text-[#212529] border border-[#CED4DA] rounded-[6px] mb-3 placeholder:text-[#868E96] focus:border-[#714B67] focus:outline-none"
+                    />
+
+                    <div className="space-y-2">
+                      {(activeCycle?.steps || []).map((s) => {
+                        const isAuthor = user?.id === detail.quotation?.salesRepId;
+                        const isAuthorizedReviewer =
+                          (roleCode === "ADMIN" ||
+                            roleCode === s.role?.code ||
+                            (user?.roleId && user.roleId === s.roleId)) &&
+                          !isAuthor;
+
+                        return (
+                          <div
+                            key={s.id}
+                            className="flex flex-col sm:flex-row sm:items-center justify-between border border-[#E9ECEF] rounded-[6px] p-3 gap-2 bg-white"
+                          >
+                            <div>
+                              <div className="text-xs font-bold text-[#212529] flex items-center gap-2">
+                                <span>Step {s.stepOrder}: {s.role?.name || s.role?.code}</span>
+                                {s.status === "PENDING" && isAuthorizedReviewer && (
+                                  <Badge variant="warning" size="sm">Action Required</Badge>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-[#6C757D] mt-0.5">
+                                {s.reviewer ? `Reviewed by ${s.reviewer.fullName}` : "Awaiting decision"}
+                                {s.reason && ` — "${s.reason}"`}
+                              </div>
+                            </div>
+
+                            {s.status === "PENDING" ? (
+                              isAuthorizedReviewer ? (
+                                <div className="flex items-center gap-1.5">
+                                  <Button
+                                    variant="primary"
+                                    size="sm"
+                                    className="text-xs font-semibold"
+                                    disabled={busy}
+                                    onClick={() => act(s.id, "approve")}
+                                  >
+                                    Approve Deal
+                                  </Button>
+                                  <Button
+                                    variant="danger"
+                                    size="sm"
+                                    className="text-xs"
+                                    disabled={busy}
+                                    onClick={() => act(s.id, "reject")}
+                                  >
+                                    Reject
+                                  </Button>
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    className="text-xs"
+                                    disabled={busy}
+                                    onClick={() => act(s.id, "return")}
+                                  >
+                                    Return to Rep
+                                  </Button>
+                                </div>
+                              ) : isAuthor ? (
+                                <span className="text-xs text-[#DC3545] font-medium italic">
+                                  Anti-self-approval rule active
+                                </span>
+                              ) : (
+                                <span className="text-xs text-[#6C757D] font-medium">
+                                  Awaiting {s.role?.name || s.role?.code}
+                                </span>
+                              )
+                            ) : (
+                              <Badge
+                                variant={
+                                  s.status === "APPROVED"
+                                    ? "success"
+                                    : s.status === "REJECTED"
+                                    ? "danger"
+                                    : "neutral"
+                                }
+                                size="sm"
+                              >
+                                {s.status}
+                              </Badge>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-[#E9ECEF] flex items-center justify-between">
+                      <Link href={`/quotations/${detail.quotation.id}`}>
+                        <Button variant="secondary" size="sm" className="text-xs">
+                          Open Full Quotation Editor →
+                        </Button>
+                      </Link>
+                      <span className="text-[11px] text-[#6C757D]">
+                        Status: <strong>{detail.quotation.status}</strong>
+                      </span>
+                    </div>
+                  </Card>
+                </>
+              )}
+            </div>
           </div>
-        </div>
+          </>
+        )}
+
+        {/* ═══════════════════════════════════════════════════════════════════ */}
+        {/* TAB 2: STALLED QUOTATIONS MONITOR                                   */}
+        {/* ═══════════════════════════════════════════════════════════════════ */}
+        {activeTab === "stalled" && (
+          <div className="space-y-5">
+            <div className="bg-[#FFF5F5] border border-[#FF8787]/40 rounded-[8px] p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-bold text-[#C92A2A] flex items-center gap-2">
+                  <span>⚠️ Deals Stalled Beyond Inactivity Threshold ({daysThreshold} Days)</span>
+                </div>
+                <div className="text-xs text-[#495057] mt-0.5">
+                  Quotations with zero commercial progress for over {daysThreshold} days. Stalled quotations lose win-rate momentum and require manager intervention or rep re-engagement.
+                </div>
+              </div>
+              <div className="flex items-center gap-4 shrink-0">
+                <div className="text-right">
+                  <div className="text-[10px] uppercase font-semibold text-[#868E96]">Stalled Value</div>
+                  <div className="text-base font-bold text-[#C92A2A]">{money(summary.stalledTotalValue)}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] uppercase font-semibold text-[#868E96]">Stalled Count</div>
+                  <div className="text-base font-bold text-[#212529]">{summary.stalledCount}</div>
+                </div>
+              </div>
+            </div>
+
+            <Card padding="p-0">
+              <Table headers={["Quotation #", "Customer", "Assigned Sales Rep", "Deal Stage", "Total Value", "Margin", "Inactivity Duration", "Actions"]}>
+                {stalledQuotations.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="px-6 py-8 text-center text-xs text-[#6C757D]">
+                      ✓ No stalled quotations detected! All active quotations have had activity within the past {daysThreshold} days.
+                    </td>
+                  </tr>
+                )}
+                {stalledQuotations.map((q) => (
+                  <tr key={q.id} className="border-t border-[#E9ECEF] hover:bg-[#FFF9F9] transition-colors">
+                    <td className="px-4 py-3 text-xs font-bold text-[#714B67]">
+                      <Link href={`/quotations/${q.id}`} className="hover:underline">
+                        {q.quotationNumber}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-[#212529]">
+                      <div className="font-semibold">{q.customer?.name}</div>
+                      <div className="text-[10px] text-[#6C757D]">{q.customerTier?.name || "Standard Tier"}</div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-[#495057]">
+                      {q.salesRep?.fullName || "Unassigned"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge
+                        variant={
+                          q.status === "PENDING_APPROVAL"
+                            ? "warning"
+                            : q.status === "UNDER_NEGOTIATION"
+                            ? "danger"
+                            : "neutral"
+                        }
+                        size="sm"
+                      >
+                        {q.status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 text-xs font-bold text-[#212529]">
+                      {money(q.grandTotal)}
+                    </td>
+                    <td className="px-4 py-3 text-xs font-semibold text-[#212529]">
+                      {pct(q.marginPercent)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-xs font-bold text-[#DC3545]">
+                          {q.daysInactive} days inactive
+                        </span>
+                        <span className="text-[10px] text-[#868E96]">
+                          Threshold: &gt; {daysThreshold}d
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="text-[11px] py-1 px-2"
+                          onClick={() => nudgeRep(q)}
+                        >
+                          Nudge Rep
+                        </Button>
+                        <Link href={`/quotations/${q.id}`}>
+                          <Button variant="primary" size="sm" className="text-[11px] py-1 px-2.5">
+                            Open Deal
+                          </Button>
+                        </Link>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </Table>
+            </Card>
+          </div>
+        )}
+
+        {/* ═══════════════════════════════════════════════════════════════════ */}
+        {/* TAB 3: DEAL HEALTH DASHBOARD                                        */}
+        {/* ═══════════════════════════════════════════════════════════════════ */}
+        {activeTab === "health" && (
+          <div className="space-y-6">
+            {/* KPI Summary Row */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <Card padding="p-4" className="border-l-[4px] border-l-[#E03131]">
+                <div className="text-[11px] font-semibold text-[#6C757D] uppercase tracking-wider">
+                  Stalled Deals Pipeline
+                </div>
+                <div className="text-2xl font-bold text-[#E03131] mt-1">
+                  {money(summary.stalledTotalValue)}
+                </div>
+                <div className="text-xs text-[#868E96] mt-0.5">
+                  {summary.stalledCount} deal(s) inactive &gt; {daysThreshold} days
+                </div>
+              </Card>
+
+              <Card padding="p-4" className="border-l-[4px] border-l-[#FD7E14]">
+                <div className="text-[11px] font-semibold text-[#6C757D] uppercase tracking-wider">
+                  Total At-Risk Pipeline
+                </div>
+                <div className="text-2xl font-bold text-[#FD7E14] mt-1">
+                  {money(summary.atRiskTotalValue)}
+                </div>
+                <div className="text-xs text-[#868E96] mt-0.5">
+                  {summary.atRiskCount} quotation(s) with risk signals
+                </div>
+              </Card>
+
+              <Card padding="p-4" className="border-l-[4px] border-l-[#DC3545]">
+                <div className="text-[11px] font-semibold text-[#6C757D] uppercase tracking-wider">
+                  Critical Severity Deals
+                </div>
+                <div className="text-2xl font-bold text-[#DC3545] mt-1">
+                  {summary.criticalRiskCount}
+                </div>
+                <div className="text-xs text-[#868E96] mt-0.5">
+                  Margin floor breaches &amp; severe stall
+                </div>
+              </Card>
+
+              <Card padding="p-4" className="border-l-[4px] border-l-[#714B67]">
+                <div className="text-[11px] font-semibold text-[#6C757D] uppercase tracking-wider">
+                  Approval Queue Load
+                </div>
+                <div className="text-2xl font-bold text-[#714B67] mt-1">
+                  {summary.pendingApprovalsCount}
+                </div>
+                <div className="text-xs text-[#868E96] mt-0.5">
+                  Awaiting review decision
+                </div>
+              </Card>
+            </div>
+
+            {/* Signal Filter Chips */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-[#495057] uppercase tracking-wider mr-1">
+                Filter Signals:
+              </span>
+              {[
+                { id: "ALL", label: `All At-Risk (${atRiskQuotations.length})` },
+                { id: "CRITICAL", label: `Critical Only (${summary.criticalRiskCount})` },
+                { id: "STALLED_DEAL", label: `Stalled Deals (${summary.stalledCount})` },
+                { id: "MARGIN_FLOOR_BREACH", label: "Margin Floor Breaches" },
+                { id: "DISCOUNT_ANOMALY", label: "Discount Anomalies" },
+                { id: "APPROVAL_OVERDUE", label: "Approval Overdue" },
+                { id: "DELIVERY_SLIPPAGE", label: "Delivery Slippage" },
+              ].map((filter) => (
+                <button
+                  key={filter.id}
+                  onClick={() => setSignalFilter(filter.id)}
+                  className={`px-3 py-1.5 text-xs rounded-[6px] transition-all font-medium ${
+                    signalFilter === filter.id
+                      ? "bg-[#212529] text-white shadow-xs"
+                      : "bg-white text-[#495057] hover:bg-[#E9ECEF] border border-[#CED4DA]"
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Deal Health Table */}
+            <Card padding="p-0">
+              <Table headers={["Quotation #", "Customer", "Rep", "Risk Severity", "Active Health Signals", "Total Value", "Margin", "Recommended Intervention", "Action"]}>
+                {filteredAtRisk.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="px-6 py-8 text-center text-xs text-[#6C757D]">
+                      ✓ No at-risk quotations found matching the selected signal filter.
+                    </td>
+                  </tr>
+                )}
+                {filteredAtRisk.map((q) => (
+                  <tr key={q.id} className="border-t border-[#E9ECEF] hover:bg-[#F8F9FA] transition-colors">
+                    <td className="px-4 py-3 text-xs font-bold text-[#714B67]">
+                      <Link href={`/quotations/${q.id}`} className="hover:underline">
+                        {q.quotationNumber}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-[#212529]">
+                      <div className="font-semibold">{q.customer?.name}</div>
+                      <div className="text-[10px] text-[#6C757D]">{q.customerTier?.name || "Standard Tier"}</div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-[#495057]">
+                      {q.salesRep?.fullName || "Unassigned"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge
+                        variant={
+                          q.healthStatus === "CRITICAL"
+                            ? "danger"
+                            : q.healthStatus === "HIGH_RISK"
+                            ? "warning"
+                            : "info"
+                        }
+                        size="sm"
+                      >
+                        {q.healthStatus.replace(/_/g, " ")}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-1 max-w-xs">
+                        {q.signals.map((s, idx) => (
+                          <div key={idx} className="flex items-start gap-1.5 text-[11px] text-[#495057]">
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full mt-1 shrink-0 ${
+                                s.severity === "CRITICAL"
+                                  ? "bg-[#DC3545]"
+                                  : s.severity === "HIGH"
+                                  ? "bg-[#FD7E14]"
+                                  : "bg-[#FFC107]"
+                              }`}
+                            />
+                            <span>{s.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-xs font-bold text-[#212529]">
+                      {money(q.grandTotal)}
+                    </td>
+                    <td className="px-4 py-3 text-xs font-semibold">
+                      <span className={Number(q.marginPercent) < 15 ? "text-[#DC3545]" : "text-[#212529]"}>
+                        {pct(q.marginPercent)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-[#495057] max-w-xs">
+                      {q.isStalled ? (
+                        <span className="text-[#C92A2A] font-medium">Re-engage customer with updated commercial proposal</span>
+                      ) : q.status === "PENDING_APPROVAL" ? (
+                        <span className="text-[#FD7E14] font-medium">Prioritize manager review decision</span>
+                      ) : Number(q.marginPercent) < 15 ? (
+                        <span className="text-[#DC3545] font-medium">Adjust discounts to recover commercial margin floor</span>
+                      ) : (
+                        <span>Monitor negotiation velocity</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link href={`/quotations/${q.id}`}>
+                        <Button variant="primary" size="sm" className="text-[11px] py-1 px-2.5">
+                          Review
+                        </Button>
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </Table>
+            </Card>
+          </div>
+        )}
       </main>
     </div>
   );

@@ -27,10 +27,10 @@ router.use(authenticate);
 // Policy & Ladder Steps CRUD
 router.get('/policies', getPolicies);
 router.get('/policies/:id', getPolicyById);
-router.post('/policies', requireRole('ADMIN'), createPolicy);
-router.post('/policies/:id/steps', requireRole('ADMIN'), createPolicyStep);
-router.put('/policies/steps/:stepId', requireRole('ADMIN'), updatePolicyStep);
-router.delete('/policies/steps/:stepId', requireRole('ADMIN'), deletePolicyStep);
+router.post('/policies', requireRole('ADMIN', 'SALES_MANAGER'), createPolicy);
+router.post('/policies/:id/steps', requireRole('ADMIN', 'SALES_MANAGER'), createPolicyStep);
+router.put('/policies/steps/:stepId', requireRole('ADMIN', 'SALES_MANAGER'), updatePolicyStep);
+router.delete('/policies/steps/:stepId', requireRole('ADMIN', 'SALES_MANAGER'), deletePolicyStep);
 
 // Approval Lifecycle
 router.post('/request/:quotationId', requestApproval);

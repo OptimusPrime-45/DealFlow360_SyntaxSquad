@@ -26,9 +26,9 @@ router.put('/settings', requireRole('ADMIN'), updateSettings);
 
 // Discount Rules CRUD
 router.get('/discount-rules', listDiscountRules);
-router.post('/discount-rules', requireRole('ADMIN'), createDiscountRule);
-router.put('/discount-rules/:id', requireRole('ADMIN'), updateDiscountRule);
-router.delete('/discount-rules/:id', requireRole('ADMIN'), deleteDiscountRule);
+router.post('/discount-rules', requireRole('ADMIN', 'SALES_MANAGER'), createDiscountRule);
+router.put('/discount-rules/:id', requireRole('ADMIN', 'SALES_MANAGER'), updateDiscountRule);
+router.delete('/discount-rules/:id', requireRole('ADMIN', 'SALES_MANAGER'), deleteDiscountRule);
 
 // Evaluation
 router.post('/evaluate/:quotationId', evaluateQuotation);

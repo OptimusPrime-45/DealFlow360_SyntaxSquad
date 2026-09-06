@@ -12,11 +12,24 @@ import { BatchActionBar } from "../../components/ui/BatchActionBar.jsx";
 import { BTreeSearchIndex } from "../../lib/btree.js";
 import { exportToCSV } from "../../lib/exportCsv.js";
 
+// Stalled-deal threshold; mirrors GovernanceSetting.stalledAfterDays default on the backend.
+const STALLED_AFTER_DAYS = 7;
+const OPEN_STATUSES = new Set([
+  "DRAFT",
+  "PENDING_APPROVAL",
+  "SENT",
+  "UNDER_NEGOTIATION",
+  "APPROVED",
+]);
+
 export default function QuotationsPage() {
   const router = useRouter();
   const { user, isAuthenticated, loading: authLoading } = useAuth();
 
   const [quotations, setQuotations] = useState([]);
+  // Timestamp of the last successful fetch; anchors the stalled-deal cutoff
+  // so filtering stays pure across re-renders.
+  const [loadedAt, setLoadedAt] = useState(null);
   const [salesReps, setSalesReps] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -51,6 +64,7 @@ export default function QuotationsPage() {
       const res = await apiClient.get("/quotations");
       const data = res.quotations || [];
       setQuotations(data);
+      setLoadedAt(Date.now());
 
       if (isManagerOrAdmin) {
         const repMap = new Map();
@@ -125,10 +139,20 @@ export default function QuotationsPage() {
       result = result.filter((q) => Number(q.marginPercent) < 15);
     } else if (activeFilters.anomaly === "CEILING_BREACH") {
       result = result.filter((q) => Number(q.worstLineOverage) > 0);
+    } else if (activeFilters.anomaly === "STALLED") {
+      // Mirrors backend getQuotations(stalled=true): inactive past the threshold
+      // and still in an open (non-terminal) status.
+      const cutoff = (loadedAt ?? 0) - STALLED_AFTER_DAYS * 24 * 60 * 60 * 1000;
+      result = result.filter(
+        (q) =>
+          q.lastActivityAt &&
+          new Date(q.lastActivityAt).getTime() <= cutoff &&
+          OPEN_STATUSES.has(q.status)
+      );
     }
 
     return result;
-  }, [quotations, searchTerm, activeFilters, btreeIndex]);
+  }, [quotations, searchTerm, activeFilters, btreeIndex, loadedAt]);
 
   // Multi-select helpers
   const handleToggleSelect = (id) => {
@@ -231,6 +255,7 @@ export default function QuotationsPage() {
       options: [
         { label: "Low Margin (< 15%)", value: "LOW_MARGIN" },
         { label: "Ceiling Breached (> 0 pts)", value: "CEILING_BREACH" },
+        { label: "⚠️ Stalled Deals (7d+ inactive)", value: "STALLED" },
       ],
     },
   ];
@@ -446,12 +471,24 @@ export default function QuotationsPage() {
                   </Badge>
                 </td>
                 <td className="py-3 px-4">
-                  <Badge
-                    variant={statusColors[q.status] || "neutral"}
-                    size="sm"
-                  >
-                    {q.status}
-                  </Badge>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <Badge
+                      variant={statusColors[q.status] || "neutral"}
+                      size="sm"
+                    >
+                      {q.status}
+                    </Badge>
+                    {(() => {
+                      const msInactive = Date.now() - new Date(q.lastActivityAt || q.createdAt).getTime();
+                      const daysInactive = Math.floor(msInactive / (24 * 60 * 60 * 1000));
+                      const isStalled = daysInactive >= 7 && !["CONFIRMED", "CANCELLED", "REJECTED"].includes(q.status);
+                      return isStalled ? (
+                        <Badge variant="danger" size="sm" title={`Inactive for ${daysInactive} days`}>
+                          Stalled ({daysInactive}d)
+                        </Badge>
+                      ) : null;
+                    })()}
+                  </div>
                 </td>
                 <td className="py-3 px-4 text-xs text-[#6C757D] text-center font-medium">
                   {q._count?.lines || q.lines?.length || 0}
